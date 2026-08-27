@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nostromo"
+version = "0.1.0"
+description = "Sandbox de ejecución aislada con Bubblewrap y evaluador de casos de prueba .in/.out"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+nostromo = "nostromo.cli:main"
+
+[project.entry-points."ripley.plugins"]
+sandbox = "nostromo.ripley_plugin:NostromoPlugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nostromo"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
