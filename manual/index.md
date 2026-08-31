@@ -176,3 +176,53 @@ check-nostromo:
 ````
 
 Ejecutá `make check-nostromo` antes de cada commit para asegurar que tu código conserve el estado de aprobación.
+
+---
+
+(manual-nostromo-arquitectura)=
+## 7. Arquitectura Interna y Mecanismo Técnico
+
+La herramienta **`nostromo`** implementa un motor de alta precisión basado en:
+
+- **Tecnología Núcleo:** `Linux Bubblewrap (bwrap) + setrlimit CPU/RAM Quotas + Unix Pipes IPC + Timeout Watchdog`.
+- **Aislamiento y Determinismo:** Diseñada para operar sin efectos colaterales en entornos de integración continua (CI), terminales de estudiantes y servidores docentes headless.
+- **Manejo de Errores Pedagógico:** Todo fallo de sintaxis, memoria o lógica se traduce en una acción prescriptiva concreta con su respectiva justificación técnica.
+
+---
+
+(manual-nostromo-ecosistema)=
+## 8. Integración y Conexión con el Ecosistema
+
+````{note}
+Ninguna herramienta opera de forma aislada. **`nostromo`** forma parte del pipeline integral de evaluación, verificación y enseñanza de la cátedra.
+````
+
+### Diagrama de Flujo e Interoperabilidad
+
+````{mermaid}
+graph TD
+    BIN[Binario Compilado] --> NOS[Nostromo: Sandbox Bubblewrap]
+    TEST[Testcases .in/.out] --> NOS
+    NOS -->|Aislamiento de Kernel (bwrap)| LINUX[Linux Namespaces / setrlimit]
+    NOS -->|Ejecución Exitosa| DRD[Dredd: Autograding Masivo]
+    NOS -->|Señal Fatal SIGSEGV| HAL[Hal: Forense de Core Dumps]
+````
+
+### Matriz de Intercambio de Datos
+
+| Canal | Herramientas Conectadas | Tipo de Datos Transferidos |
+| :--- | :--- | :--- |
+| **Entradas (Inputs)** | - `Binarios compilados por Daedalus y testcases de Deckard o Tyrell` | Código fuente, AST, binarios, testcases, contratos |
+| **Salidas (Outputs)** | - `dredd (resultados de ejecución segura)`
+- `hal (captura de crashes)` | Informes Markdown, diagnósticos Rich, JSON, actas |
+| **Sincronización** | `daedalus`, `dredd`, `tyrell`, `hal` | Validación cruzada, flags compartidos y autofix |
+
+### Pipeline de Integración Recomendado
+
+Podés encadenar `nostromo` con otras herramientas del ecosistema en una única línea de comando:
+
+````{code-block} bash
+# Pipeline de integración típico
+nostromo run --binary ./bin/programa --testcases testcases/
+````
+
