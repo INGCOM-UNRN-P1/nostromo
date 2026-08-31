@@ -347,3 +347,12 @@ Podés encadenar `nostromo` con otras herramientas del ecosistema en una única 
 nostromo run --binary ./bin/programa --testcases testcases/
 ````
 
+---
+
+(manual-nostromo-seccion-plugins)=
+## 9. Extensión, Desarrollo de Plugins y API Python
+
+Para crear tus propias reglas, conectores de evaluación o integrar `nostromo` programáticamente en pipelines de CI/CD:
+
+- 👉 **Consultá la guía completa:** [Guía de Extensión y Creación de Plugins](plugins.md)
+
