@@ -87,13 +87,35 @@ def run_cmd(
     raise typer.Exit(code=ret if ret != 0 else 0)
 
 
+def generar_seccion_markdown(reporte) -> str:
+    """Genera sección de evaluación en sandbox de casos de prueba para Dredd."""
+    lines = ["## Pruebas Funcionales en Sandbox (Nostromo)\n"]
+    lines.append(f"- **Binario evaluado:** `{reporte.binario.name}`")
+    lines.append(f"- **Casos de prueba evaluados:** {reporte.total_casos}")
+    lines.append(f"- **Aprobados:** {reporte.casos_aprobados}/{reporte.total_casos} ({reporte.porcentaje_aprobacion:.1f}%)\n")
+    if reporte.ok:
+        lines.append("> [!TIP]\n> **Casos de Prueba Aprobados:** El binario superó el 100% de los casos de prueba dentro del sandbox.\n")
+    else:
+        lines.append("> [!WARNING]\n> **Fallo en Casos de Prueba:** Se detectaron salidas incorrectas, errores de ejecución o timeouts.\n")
+        lines.append("| Caso | Estado | Retorno | Tiempo (ms) | Diagnóstico |")
+        lines.append("| :--- | :---: | :---: | :---: | :--- |")
+        for r in reporte.resultados:
+            st = "✓ PASS" if r.paso else f"❌ FAIL ({r.error_tipo or 'Mismatch'})"
+            diag = "OK" if r.paso else (r.diff_lineas[0].strip() if r.diff_lineas else r.stderr_obtenido[:40] or "Salida distinta")
+            lines.append(f"| `{r.nombre}` | **{st}** | `{r.codigo_retorno}` | {r.tiempo_ms:.1f} ms | {diag} |")
+        lines.append("")
+    return "\n".join(lines)
+
+
 @app.command("test")
+@app.command("check")
 def test_cmd(
     binario: Path = typer.Argument(..., help="Binario ejecutable a evaluar."),
     test_dir: Path = typer.Argument(..., help="Directorio con archivos .in y .out."),
     timeout: float = typer.Option(2.0, "--timeout", "-t", help="Timeout por caso en segundos."),
     memory: int = typer.Option(128, "--memory", "-m", help="Límite de memoria en MB."),
     json_output: bool = typer.Option(False, "--json", help="Salida estructurada en JSON."),
+    output_md: Optional[Path] = typer.Option(None, "--md", "--output-md", "-o", help="Generar sección de reporte en formato Markdown para fusión en Dredd."),
 ) -> None:
     """Ejecuta una suite completa de casos de prueba .in/.out y genera el reporte de evaluación."""
     casos = descubrir_casos_prueba(test_dir)
@@ -102,6 +124,13 @@ def test_cmd(
         raise typer.Exit(code=2)
 
     reporte = evaluar_binario(binario, casos, timeout_segundos=timeout, memoria_mb=memory)
+
+    if output_md:
+        md_text = generar_seccion_markdown(reporte)
+        output_md.parent.mkdir(parents=True, exist_ok=True)
+        output_md.write_text(md_text, encoding="utf-8")
+        console.print(f"[green]✓ Sección Markdown generada en:[/green] [cyan]{output_md}[/cyan]")
+        raise typer.Exit(code=0 if reporte.ok else 1)
 
     if json_output:
         print(json.dumps(reporte.to_dict(), indent=2, ensure_ascii=False))
@@ -144,8 +173,28 @@ def doctor_cmd() -> None:
 
     bwrap = shutil.which("bwrap")
     tabla.add_row("Bubblewrap (bwrap)", "[green]✓ Presente[/green]" if bwrap else "[yellow]⚠️ Ausente (fallback a setrlimit)[/yellow]", bwrap or "Instalar bubblewrap con sudo apt install bubblewrap")
-
     console.print(tabla)
+
+
+@app.command("report")
+def report_cmd(
+    binario: Path = typer.Argument(..., help="Binario ejecutable a evaluar."),
+    test_dir: Path = typer.Argument(..., help="Directorio con archivos .in y .out."),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Ruta de destino del archivo Markdown."),
+) -> None:
+    """Genera directamente la sección de reporte Markdown de NOSTROMO para Dredd."""
+    casos = descubrir_casos_prueba(test_dir)
+    if not casos:
+        err_console.print(f"[red]Error:[/red] No se encontraron casos de prueba (.in/.out) en '{test_dir}'.")
+        raise typer.Exit(code=2)
+    reporte = evaluar_binario(binario, casos)
+    md_content = generar_seccion_markdown(reporte)
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(md_content, encoding="utf-8")
+        console.print(f"[green]✓ Reporte Markdown generado en:[/green] [cyan]{output}[/cyan]")
+    else:
+        print(md_content)
 
 
 def main() -> None:
