@@ -57,19 +57,24 @@ def run_cmd(
     json_output: bool = typer.Option(False, "--json", help="Salida en JSON."),
 ) -> None:
     """Ejecuta un binario dentro del sandbox con límites estrictos de CPU y memoria."""
-    ret, stdout, stderr, t_ms, err_tipo = ejecutar_aislado(
+    res = ejecutar_aislado(
         binario=binario,
         args=args or [],
         stdin_texto=stdin or "",
         timeout_segundos=timeout,
         memoria_mb=memory,
     )
+    ret, stdout, stderr, t_ms, err_tipo = res
+    cpu_us = getattr(res, "cpu_tiempo_us", 0)
+    rss_kb = getattr(res, "max_rss_kb", 0)
 
     if json_output:
         data = {
             "binario": str(binario),
             "codigo_retorno": ret,
             "tiempo_ms": round(t_ms, 2),
+            "cpu_tiempo_us": cpu_us,
+            "max_rss_kb": rss_kb,
             "error_tipo": err_tipo,
             "stdout": stdout,
             "stderr": stderr,
@@ -78,11 +83,13 @@ def run_cmd(
         raise typer.Exit(code=ret if ret != 0 else 0)
 
     if stdout:
-        console.print(stdout, end="")
+        console.print("[bold green]--- STDOUT ---[/bold green]")
+        console.print(stdout, end="" if stdout.endswith("\n") else "\n")
     if stderr:
-        err_console.print(f"[red]{stderr}[/red]", end="")
+        err_console.print("[bold yellow]--- STDERR ---[/bold yellow]")
+        err_console.print(f"[red]{stderr}[/red]", end="" if stderr.endswith("\n") else "\n")
     if err_tipo:
-        err_console.print(f"\n[bold red]Terminado con señal / error: {err_tipo} ({t_ms:.1f} ms)[/bold red]")
+        err_console.print(f"\n[bold red]Terminado con señal / error: {err_tipo} ({t_ms:.1f} ms, CPU: {cpu_us} μs, RSS: {rss_kb} KB)[/bold red]")
 
     raise typer.Exit(code=ret if ret != 0 else 0)
 
@@ -97,12 +104,14 @@ def generar_seccion_markdown(reporte) -> str:
         lines.append("> [!TIP]\n> **Casos de Prueba Aprobados:** El binario superó el 100% de los casos de prueba dentro del sandbox.\n")
     else:
         lines.append("> [!WARNING]\n> **Fallo en Casos de Prueba:** Se detectaron salidas incorrectas, errores de ejecución o timeouts.\n")
-        lines.append("| Caso | Estado | Retorno | Tiempo (ms) | Diagnóstico |")
-        lines.append("| :--- | :---: | :---: | :---: | :--- |")
+        lines.append("| Caso | Estado | Retorno | Tiempo | CPU (μs) | RAM (KB) | Diagnóstico |")
+        lines.append("| :--- | :---: | :---: | :---: | :---: | :---: | :--- |")
         for r in reporte.resultados:
             st = "✓ PASS" if r.paso else f"❌ FAIL ({r.error_tipo or 'Mismatch'})"
             diag = "OK" if r.paso else (r.diff_lineas[0].strip() if r.diff_lineas else r.stderr_obtenido[:40] or "Salida distinta")
-            lines.append(f"| `{r.nombre}` | **{st}** | `{r.codigo_retorno}` | {r.tiempo_ms:.1f} ms | {diag} |")
+            if r.hal_diagnostico:
+                diag += f" | HAL: {r.hal_diagnostico}"
+            lines.append(f"| `{r.nombre}` | **{st}** | `{r.codigo_retorno}` | {r.tiempo_ms:.1f} ms | {r.cpu_tiempo_us} | {r.max_rss_kb} | {diag} |")
         lines.append("")
     return "\n".join(lines)
 
@@ -114,6 +123,9 @@ def test_cmd(
     test_dir: Path = typer.Argument(..., help="Directorio con archivos .in y .out."),
     timeout: float = typer.Option(2.0, "--timeout", "-t", help="Timeout por caso en segundos."),
     memory: int = typer.Option(128, "--memory", "-m", help="Límite de memoria en MB."),
+    adaptive_timeout: bool = typer.Option(False, "--adaptive-timeout", "-a", help="Ajustar timeout según tamaño de entrada."),
+    no_hal: bool = typer.Option(False, "--no-hal", help="Desactivar diagnóstico con HAL."),
+    side_by_side: bool = typer.Option(False, "--side-by-side", "-s", help="Mostrar diff lado a lado en fallos."),
     json_output: bool = typer.Option(False, "--json", help="Salida estructurada en JSON."),
     output_md: Optional[Path] = typer.Option(None, "--md", "--output-md", "-o", help="Generar sección de reporte en formato Markdown para fusión en Dredd."),
 ) -> None:
@@ -123,7 +135,14 @@ def test_cmd(
         err_console.print(f"[red]Error:[/red] No se encontraron casos de prueba (.in/.out) en '{test_dir}'.")
         raise typer.Exit(code=2)
 
-    reporte = evaluar_binario(binario, casos, timeout_segundos=timeout, memoria_mb=memory)
+    reporte = evaluar_binario(
+        binario=binario,
+        casos=casos,
+        timeout_segundos=timeout,
+        memoria_mb=memory,
+        timeout_adaptativo=adaptive_timeout,
+        integrar_hal=not no_hal,
+    )
 
     if output_md:
         md_text = generar_seccion_markdown(reporte)
@@ -142,25 +161,135 @@ def test_cmd(
     tabla.add_column("Resultado", justify="center")
     tabla.add_column("Retorno", justify="center")
     tabla.add_column("Tiempo", justify="right")
+    tabla.add_column("CPU (μs)", justify="right", style="dim")
+    tabla.add_column("RAM (KB)", justify="right", style="dim")
     tabla.add_column("Detalle")
 
     for r in reporte.resultados:
         res_str = "[bold green]PASS[/bold green]" if r.paso else f"[bold red]FAIL ({r.error_tipo})[/bold red]"
         detalle = "Coincidencia exacta" if r.paso else (r.diff_lineas[0].strip() if r.diff_lineas else r.stderr_obtenido[:40])
-        tabla.add_row(r.nombre, res_str, str(r.codigo_retorno), f"{r.tiempo_ms:.1f} ms", detalle)
+        tabla.add_row(r.nombre, res_str, str(r.codigo_retorno), f"{r.tiempo_ms:.1f} ms", str(r.cpu_tiempo_us), str(r.max_rss_kb), detalle)
 
     console.print(tabla)
+
+    # Mostrar diff lado a lado si se solicitó o si hubo fallos de diff
+    for r in reporte.resultados:
+        if not r.paso and r.diff_lado_a_lado and (side_by_side or r.error_tipo == "DIFF"):
+            diff_table = Table(title=f"Discrepancia en caso '{r.nombre}' (Lado a Lado)")
+            diff_table.add_column("Salida Esperada", style="green")
+            diff_table.add_column("Salida Obtenida", style="red")
+            for exp_l, obt_l in r.diff_lado_a_lado[:25]:
+                diff_table.add_row(exp_l, obt_l)
+            console.print(diff_table)
+
+        if r.hal_diagnostico:
+            console.print(Panel(
+                f"[bold red]Diagnóstico Forense de HAL:[/bold red]\n{r.hal_diagnostico}",
+                title=f"💥 Crash detectado en '{r.nombre}'",
+                border_style="red",
+            ))
 
     color_score = "green" if reporte.ok else "yellow" if reporte.porcentaje_aprobacion >= 60 else "red"
     console.print(Panel(
         f"Aprobados: [bold green]{reporte.casos_aprobados}/{reporte.total_casos}[/bold green] "
         f"([bold {color_score}]{reporte.porcentaje_aprobacion:.1f}%[/bold {color_score}]) · "
-        f"Tiempo Total: [cyan]{reporte.tiempo_total_ms:.1f} ms[/cyan]",
+        f"Tiempo Total: [cyan]{reporte.tiempo_total_ms:.1f} ms[/cyan] · "
+        f"CPU Total: [magenta]{reporte.cpu_tiempo_total_us} μs[/magenta] · "
+        f"Pico RAM: [blue]{reporte.max_rss_pico_kb} KB[/blue]",
         title="Resumen de Evaluación",
         border_style=color_score,
     ))
 
     raise typer.Exit(code=0 if reporte.ok else 1)
+
+
+@app.command("stress")
+def stress_cmd(
+    binario: Path = typer.Argument(..., help="Binario ejecutable a someter a prueba de estrés."),
+    test_in: Path = typer.Argument(..., help="Archivo .in con datos de entrada o directorio de pruebas."),
+    test_out: Optional[Path] = typer.Option(None, "--out", "-o", help="Archivo .out con salida esperada."),
+    iterations: int = typer.Option(100, "--iterations", "-n", help="Cantidad de iteraciones consecutivas."),
+    timeout: float = typer.Option(2.0, "--timeout", "-t", help="Timeout máximo por iteración en segundos."),
+    memory: int = typer.Option(128, "--memory", "-m", help="Límite de memoria por iteración en MB."),
+    json_output: bool = typer.Option(False, "--json", help="Emitir reporte en JSON."),
+) -> None:
+    """Ejecuta N repeticiones masivas para verificar estabilidad, memoria y evitar condiciones de carrera."""
+    from nostromo.core.runner import normalizar_salida
+
+    if test_in.is_file():
+        stdin_texto = test_in.read_text(encoding="utf-8")
+        expected_stdout = test_out.read_text(encoding="utf-8") if test_out and test_out.is_file() else None
+    elif test_in.is_dir():
+        casos = descubrir_casos_prueba(test_in)
+        if not casos:
+            err_console.print(f"[red]Error:[/red] No hay casos en '{test_in}'.")
+            raise typer.Exit(code=2)
+        stdin_texto = casos[0].stdin_texto
+        expected_stdout = casos[0].stdout_esperado
+    else:
+        err_console.print(f"[red]Error:[/red] '{test_in}' no existe.")
+        raise typer.Exit(code=2)
+
+    exitos = 0
+    fallos = 0
+    tiempos_ms = []
+    rss_lista = []
+    codigos_retorno = {}
+
+    for _ in range(iterations):
+        res = ejecutar_aislado(binario=binario, stdin_texto=stdin_texto, timeout_segundos=timeout, memoria_mb=memory)
+        ret, stdout, stderr, t_ms, err_tipo = res
+        rss_kb = getattr(res, "max_rss_kb", 0)
+        tiempos_ms.append(t_ms)
+        rss_lista.append(rss_kb)
+        codigos_retorno[ret] = codigos_retorno.get(ret, 0) + 1
+
+        ok = (ret == 0)
+        if expected_stdout is not None:
+            ok = ok and (normalizar_salida(stdout) == normalizar_salida(expected_stdout))
+
+        if ok:
+            exitos += 1
+        else:
+            fallos += 1
+
+    t_prom = sum(tiempos_ms) / len(tiempos_ms) if tiempos_ms else 0.0
+    t_min = min(tiempos_ms) if tiempos_ms else 0.0
+    t_max = max(tiempos_ms) if tiempos_ms else 0.0
+    rss_inicial = rss_lista[0] if rss_lista else 0
+    rss_final = rss_lista[-1] if rss_lista else 0
+    leak_sospechoso = (rss_final > rss_inicial * 1.5 and (rss_final - rss_inicial) > 1024)
+
+    reporte = {
+        "binario": str(binario),
+        "iteraciones": iterations,
+        "exitos": exitos,
+        "fallos": fallos,
+        "tasa_exito_pct": round((exitos / iterations * 100.0) if iterations > 0 else 0.0, 2),
+        "tiempo_promedio_ms": round(t_prom, 2),
+        "tiempo_min_ms": round(t_min, 2),
+        "tiempo_max_ms": round(t_max, 2),
+        "rss_inicial_kb": rss_inicial,
+        "rss_final_kb": rss_final,
+        "posible_fuga_acumulativa": leak_sospechoso,
+        "codigos_retorno": codigos_retorno,
+    }
+
+    if json_output:
+        print(json.dumps(reporte, indent=2, ensure_ascii=False))
+        raise typer.Exit(code=0 if fallos == 0 else 1)
+
+    color = "green" if fallos == 0 else "red"
+    tabla_stress = Table(title=f"Resultados de Prueba de Estrés ({iterations} iteraciones)")
+    tabla_stress.add_column("Métrica", style="bold cyan")
+    tabla_stress.add_column("Valor", style="yellow")
+    tabla_stress.add_row("Iteraciones Exitosas", f"[green]{exitos}/{iterations}[/green]")
+    tabla_stress.add_row("Iteraciones Fallidas", f"[{color}]{fallos}[/{color}]")
+    tabla_stress.add_row("Tiempo Mín / Prom / Máx", f"{t_min:.1f} / {t_prom:.1f} / {t_max:.1f} ms")
+    tabla_stress.add_row("Memoria RSS Inicial / Final", f"{rss_inicial} KB / {rss_final} KB")
+    tabla_stress.add_row("Fuga Acumulativa", "[red]⚠️ Posible fuga detectada[/red]" if leak_sospechoso else "[green]✓ Estable[/green]")
+    console.print(tabla_stress)
+    raise typer.Exit(code=0 if fallos == 0 else 1)
 
 
 @app.command("doctor")

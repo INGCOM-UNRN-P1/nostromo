@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -17,6 +17,7 @@ class CasoPrueba:
     stdout_esperado: str = ""
     timeout_segundos: float = 2.0
     memoria_mb: int = 128
+    timeout_adaptativo: bool = False
 
 
 @dataclass
@@ -31,6 +32,11 @@ class ResultadoCaso:
     stdout_esperado: str
     error_tipo: Optional[str] = None   # "TIMEOUT", "OOM", "SEGFAULT", "DIFF", "NON_ZERO"
     diff_lineas: List[str] = field(default_factory=list)
+    diff_lado_a_lado: List[Tuple[str, str]] = field(default_factory=list)
+    cpu_tiempo_us: int = 0
+    max_rss_kb: int = 0
+    posible_leak: bool = False
+    hal_diagnostico: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -38,11 +44,15 @@ class ResultadoCaso:
             "paso": self.paso,
             "codigo_retorno": self.codigo_retorno,
             "tiempo_ms": round(self.tiempo_ms, 2),
+            "cpu_tiempo_us": self.cpu_tiempo_us,
+            "max_rss_kb": self.max_rss_kb,
+            "posible_leak": self.posible_leak,
             "error_tipo": self.error_tipo,
             "stdout_obtenido": self.stdout_obtenido[:500],
             "stdout_esperado": self.stdout_esperado[:500],
             "stderr_obtenido": self.stderr_obtenido[:500],
             "diff_lineas": self.diff_lineas[:20],
+            "hal_diagnostico": self.hal_diagnostico,
         }
 
 
@@ -54,6 +64,8 @@ class ReporteEvaluacion:
     casos_aprobados: int
     casos_fallidos: int
     tiempo_total_ms: float
+    cpu_tiempo_total_us: int = 0
+    max_rss_pico_kb: int = 0
     resultados: List[ResultadoCaso] = field(default_factory=list)
 
     @property
@@ -73,5 +85,7 @@ class ReporteEvaluacion:
             "casos_fallidos": self.casos_fallidos,
             "porcentaje_aprobacion": round(self.porcentaje_aprobacion, 1),
             "tiempo_total_ms": round(self.tiempo_total_ms, 2),
+            "cpu_tiempo_total_us": self.cpu_tiempo_total_us,
+            "max_rss_pico_kb": self.max_rss_pico_kb,
             "resultados": [r.to_dict() for r in self.resultados],
         }

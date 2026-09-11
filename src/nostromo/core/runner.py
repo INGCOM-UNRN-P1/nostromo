@@ -43,12 +43,47 @@ def descubrir_casos_prueba(directorio: Path) -> List[CasoPrueba]:
 
 
 def normalizar_salida(texto: str) -> str:
-    """Normaliza saltos de línea y trailing whitespaces para comparación robusta."""
+    """Normaliza saltos de línea y espacios finales para comparación uniforme."""
     lineas = [l.rstrip() for l in texto.replace("\r\n", "\n").splitlines()]
-    # Eliminar líneas vacías al final
     while lineas and not lineas[-1]:
         lineas.pop()
     return "\n".join(lineas)
+
+
+def generar_diff_lado_a_lado(esperado: str, obtenido: str) -> List[Tuple[str, str]]:
+    """Genera lista de pares de líneas (esperado, obtenido) alineadas para vista en columnas."""
+    lineas_exp = normalizar_salida(esperado).splitlines()
+    lineas_obt = normalizar_salida(obtenido).splitlines()
+    max_len = max(len(lineas_exp), len(lineas_obt))
+    pares = []
+    for i in range(max_len):
+        exp = lineas_exp[i] if i < len(lineas_exp) else ""
+        obt = lineas_obt[i] if i < len(lineas_obt) else ""
+        pares.append((exp, obt))
+    return pares
+
+
+def calcular_timeout_adaptativo(tam_bytes: int, timeout_base: float = 2.0) -> float:
+    """Escala el tiempo límite de ejecución de forma adaptativa según el tamaño de la entrada."""
+    if tam_bytes <= 10_000:
+        return timeout_base
+    extra = ((tam_bytes - 10_000) / 50_000) * 0.5
+    return min(timeout_base + extra, 20.0)
+
+
+def diagnosticar_con_hal(binario: Path, stdin_texto: str) -> Optional[str]:
+    """Invoca HAL ante fallos por señales para diagnosticar la causa raíz pedagógica."""
+    try:
+        from hal.core.inspector import inspeccionar_fuente_o_binario
+        diag = inspeccionar_fuente_o_binario(ruta_objetivo=binario, stdin_data=stdin_texto)
+        if diag and diag.es_crash:
+            resumen = f"{diag.causa_raiz_titulo}"
+            if diag.archivo_falla and diag.linea_falla:
+                resumen += f" en {Path(diag.archivo_falla).name}:{diag.linea_falla}"
+            return resumen
+    except Exception:
+        pass
+    return None
 
 
 def evaluar_binario(
@@ -56,19 +91,34 @@ def evaluar_binario(
     casos: List[CasoPrueba],
     timeout_segundos: float = 2.0,
     memoria_mb: int = 128,
+    timeout_adaptativo: bool = False,
+    integrar_hal: bool = True,
 ) -> ReporteEvaluacion:
     """Ejecuta una suite de casos de prueba contra el binario."""
     resultados: List[ResultadoCaso] = []
     tiempo_total = 0.0
+    cpu_tiempo_total = 0
+    max_rss_pico = 0
 
     for c in casos:
-        ret, stdout, stderr, t_ms, err_tipo = ejecutar_aislado(
+        t_limit = c.timeout_segundos or timeout_segundos
+        if timeout_adaptativo or c.timeout_adaptativo:
+            t_limit = calcular_timeout_adaptativo(len(c.stdin_texto.encode("utf-8")), t_limit)
+
+        res_ejec = ejecutar_aislado(
             binario=binario,
             stdin_texto=c.stdin_texto,
-            timeout_segundos=c.timeout_segundos or timeout_segundos,
+            timeout_segundos=t_limit,
             memoria_mb=c.memoria_mb or memoria_mb,
         )
+        ret, stdout, stderr, t_ms, err_tipo = res_ejec
+        cpu_us = getattr(res_ejec, "cpu_tiempo_us", 0)
+        rss_kb = getattr(res_ejec, "max_rss_kb", 0)
+
         tiempo_total += t_ms
+        cpu_tiempo_total += cpu_us
+        if rss_kb > max_rss_pico:
+            max_rss_pico = rss_kb
 
         out_norm = normalizar_salida(stdout)
         exp_norm = normalizar_salida(c.stdout_esperado)
@@ -76,6 +126,7 @@ def evaluar_binario(
         # Chequear coincidencia
         paso = (ret == 0) and (out_norm == exp_norm)
         diff_lines = []
+        diff_side = []
         if not paso and not err_tipo:
             err_tipo = "DIFF"
             diff_lines = list(difflib.unified_diff(
@@ -84,6 +135,14 @@ def evaluar_binario(
                 fromfile="esperado",
                 tofile="obtenido",
             ))
+            diff_side = generar_diff_lado_a_lado(c.stdout_esperado, stdout)
+
+        hal_diag = None
+        if not paso and err_tipo in ("SEGFAULT", "ABORT", "FPE") and integrar_hal:
+            hal_diag = diagnosticar_con_hal(binario, c.stdin_texto)
+
+        # Detección heurística de posible fuga (ej: RSS excesivo relativo a un caso pequeño)
+        posible_fuga = rss_kb > (memoria_mb * 1024 * 0.9)
 
         resultados.append(ResultadoCaso(
             nombre=c.nombre,
@@ -95,6 +154,11 @@ def evaluar_binario(
             stdout_esperado=c.stdout_esperado,
             error_tipo=err_tipo if not paso else None,
             diff_lineas=diff_lines,
+            diff_lado_a_lado=diff_side,
+            cpu_tiempo_us=cpu_us,
+            max_rss_kb=rss_kb,
+            posible_leak=posible_fuga,
+            hal_diagnostico=hal_diag,
         ))
 
     aprobados = sum(1 for r in resultados if r.paso)
@@ -106,5 +170,7 @@ def evaluar_binario(
         casos_aprobados=aprobados,
         casos_fallidos=fallidos,
         tiempo_total_ms=tiempo_total,
+        cpu_tiempo_total_us=cpu_tiempo_total,
+        max_rss_pico_kb=max_rss_pico,
         resultados=resultados,
     )
