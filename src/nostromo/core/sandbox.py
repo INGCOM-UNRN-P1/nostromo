@@ -64,6 +64,35 @@ def _configurar_limites(memoria_mb: int):
     return preexec_fn
 
 
+# Nombres de las señales que interesan pedagógicamente; el resto se reporta
+# como SIGNAL_<n>.
+_SENALES = {11: "SEGFAULT", 6: "ABORT", 8: "FPE"}
+
+
+def clasificar_terminacion(codigo_retorno: int, bajo_bwrap: bool) -> Optional[str]:
+    """Traduce el código de retorno al tipo de error.
+
+    En ejecución directa Python informa la señal como retorno negativo, pero
+    bajo bwrap —el modo por defecto y recomendado— llega como 128+señal. Sin
+    contemplar ese caso, un SIGSEGV se clasificaba NON_ZERO y el disparador de
+    HAL, que exige SEGFAULT/ABORT/FPE, quedaba inalcanzable en la
+    configuración por defecto.
+
+    La forma 128+señal solo se interpreta bajo bwrap: en ejecución directa un
+    `exit(139)` legítimo debe seguir siendo NON_ZERO.
+    """
+    if codigo_retorno == 0:
+        return None
+    senal = None
+    if codigo_retorno < 0:
+        senal = -codigo_retorno
+    elif bajo_bwrap and 128 < codigo_retorno < 160:
+        senal = codigo_retorno - 128
+    if senal is not None:
+        return _SENALES.get(senal, f"SIGNAL_{senal}")
+    return "NON_ZERO"
+
+
 def ejecutar_aislado(
     binario: Path,
     args: Optional[List[str]] = None,
@@ -115,12 +144,7 @@ def ejecutar_aislado(
         max_rss = ru_after.ru_maxrss
 
         ret = res.returncode
-        err_tipo = None
-        if ret < 0:
-            sig = -ret
-            err_tipo = "SEGFAULT" if sig == 11 else "ABORT" if sig == 6 else "FPE" if sig == 8 else f"SIGNAL_{sig}"
-        elif ret != 0:
-            err_tipo = "NON_ZERO"
+        err_tipo = clasificar_terminacion(ret, bajo_bwrap=bool(bwrap_bin))
 
         return ResultadoEjecucion(ret, res.stdout, res.stderr, t_ms, err_tipo, cpu_us, max_rss)
 

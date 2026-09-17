@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import difflib
+import json
+import shutil
+import subprocess
 from pathlib import Path
 from typing import List, Optional
 
@@ -71,19 +74,57 @@ def calcular_timeout_adaptativo(tam_bytes: int, timeout_base: float = 2.0) -> fl
     return min(timeout_base + extra, 20.0)
 
 
+def _resumen_hal(titulo: str, archivo: Optional[str], linea: Optional[int]) -> str:
+    resumen = titulo
+    if archivo and linea:
+        resumen += f" en {Path(archivo).name}:{linea}"
+    return resumen
+
+
 def diagnosticar_con_hal(binario: Path, stdin_texto: str) -> Optional[str]:
-    """Invoca HAL ante fallos por señales para diagnosticar la causa raíz pedagógica."""
+    """Invoca HAL ante fallos por señales para diagnosticar la causa raíz pedagógica.
+
+    Se intenta primero el import directo y, si HAL no está instalado en este
+    entorno, se cae a su CLI. Antes existía solo la vía import envuelta en un
+    `except Exception: pass`, de modo que en el venv propio de nostromo —donde
+    `import hal` falla— la función devolvía None en silencio y la integración
+    declarada en el README no ocurría nunca.
+    """
     try:
         from hal.core.inspector import inspeccionar_fuente_o_binario
+
         diag = inspeccionar_fuente_o_binario(ruta_objetivo=binario, stdin_data=stdin_texto)
         if diag and diag.es_crash:
-            resumen = f"{diag.causa_raiz_titulo}"
-            if diag.archivo_falla and diag.linea_falla:
-                resumen += f" en {Path(diag.archivo_falla).name}:{diag.linea_falla}"
-            return resumen
-    except Exception:
+            return _resumen_hal(diag.causa_raiz_titulo, diag.archivo_falla, diag.linea_falla)
+        return None
+    except ImportError:
         pass
-    return None
+    except Exception:
+        return None
+
+    hal_bin = shutil.which("hal")
+    if not hal_bin:
+        return None
+
+    try:
+        proc = subprocess.run(
+            [hal_bin, "run", str(binario), "--json"],
+            input=stdin_texto,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        datos = json.loads(proc.stdout or "{}")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+    if not datos.get("es_crash"):
+        return None
+    return _resumen_hal(
+        datos.get("causa_raiz_titulo", "Fallo detectado por HAL"),
+        datos.get("archivo_falla") or datos.get("archivo"),
+        datos.get("linea_falla") or datos.get("linea"),
+    )
 
 
 def evaluar_binario(
