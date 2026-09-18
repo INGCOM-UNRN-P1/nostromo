@@ -9,9 +9,9 @@ NOSTROMO es un entorno aislado de ejecución (sandbox basado en `Bubblewrap` / `
 ### Qué cubre
 - Aislamiento seguro en tiempo de ejecución (Sandbox) de programas compilados en C.
 - Contención no privilegiada mediante Bubblewrap (`bwrap`) con aislamiento de sistema de archivos, red y procesos, y degradación controlada a POSIX `setrlimit`.
-- Imposición estricta de límites de tiempo de CPU (timeout), memoria RAM máxima y tamaño de archivos de salida.
+- Imposición de límites de tiempo de pared (`--timeout`), tiempo de CPU (el timeout redondeado hacia arriba más un segundo, que corta también a los programas con varios hilos), memoria máxima (`--memory`) y tamaño de cada archivo escrito, salida estándar incluida (16 MB).
 - Evaluación desatendida y automática de suites de casos de prueba de entrada/salida (`.in / .out`).
-- Captura y reporte estructurado de estadísticas de consumo (`rusage`: tiempo de usuario, tiempo de sistema, memoria pico).
+- Captura y reporte estructurado de estadísticas de consumo (`rusage`: tiempo de usuario y de sistema, memoria pico) **del programa evaluado**, también bajo `bwrap`.
 
 ### Qué no cubre (Límites y Delegación)
 - Compilación de código fuente C (delega en `daedalus`).
@@ -27,6 +27,7 @@ NOSTROMO es un entorno aislado de ejecución (sandbox basado en `Bubblewrap` / `
 
 ### Dependencias Externas y Binarios
 - `bwrap` (recomendado para aislamiento fuerte).
+- `python3` del sistema en `/usr/bin` (o `/bin`, `/usr/local/bin`): bajo `bwrap` corre un pequeño lanzador que mide el consumo real del programa. Sin él la ejecución sigue funcionando, pero el consumo se informa como `N/D` en lugar de mostrar el del sandbox.
 
 ### Integración en el Ecosistema
 - CLI `nostromo`. Plugin registrado en `ripley.plugins` (`sandbox`). Consumido por `ripley` y `dredd`. Subcomando `nostromo doctor`.
