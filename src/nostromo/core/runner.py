@@ -155,6 +155,7 @@ def evaluar_binario(
         ret, stdout, stderr, t_ms, err_tipo = res_ejec
         cpu_us = getattr(res_ejec, "cpu_tiempo_us", 0)
         rss_kb = getattr(res_ejec, "max_rss_kb", 0)
+        uso_medido = getattr(res_ejec, "uso_medido", True)
 
         tiempo_total += t_ms
         cpu_tiempo_total += cpu_us
@@ -183,7 +184,7 @@ def evaluar_binario(
             hal_diag = diagnosticar_con_hal(binario, c.stdin_texto)
 
         # Detección heurística de posible fuga (ej: RSS excesivo relativo a un caso pequeño)
-        posible_fuga = rss_kb > (memoria_mb * 1024 * 0.9)
+        posible_fuga = uso_medido and rss_kb > (memoria_mb * 1024 * 0.9)
 
         resultados.append(ResultadoCaso(
             nombre=c.nombre,
@@ -200,6 +201,7 @@ def evaluar_binario(
             cpu_tiempo_us=cpu_us,
             max_rss_kb=rss_kb,
             posible_leak=posible_fuga,
+            uso_medido=uso_medido,
             hal_diagnostico=hal_diag,
         ))
 

@@ -37,6 +37,7 @@ class ResultadoCaso:
     cpu_tiempo_us: int = 0
     max_rss_kb: int = 0
     posible_leak: bool = False
+    uso_medido: bool = True
     hal_diagnostico: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -48,6 +49,7 @@ class ResultadoCaso:
             "cpu_tiempo_us": self.cpu_tiempo_us,
             "max_rss_kb": self.max_rss_kb,
             "posible_leak": self.posible_leak,
+            "uso_medido": self.uso_medido,
             "error_tipo": self.error_tipo,
             "stdin_texto": self.stdin_texto[:500],
             "stdout_obtenido": self.stdout_obtenido[:500],

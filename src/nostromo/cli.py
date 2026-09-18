@@ -88,14 +88,16 @@ def run_cmd(
     ret, stdout, stderr, t_ms, err_tipo = res
     cpu_us = getattr(res, "cpu_tiempo_us", 0)
     rss_kb = getattr(res, "max_rss_kb", 0)
+    uso_medido = getattr(res, "uso_medido", True)
 
     if json_output:
         data = {
             "binario": str(binario),
             "codigo_retorno": ret,
             "tiempo_ms": round(t_ms, 2),
-            "cpu_tiempo_us": cpu_us,
-            "max_rss_kb": rss_kb,
+            "cpu_tiempo_us": cpu_us if uso_medido else None,
+            "max_rss_kb": rss_kb if uso_medido else None,
+            "uso_medido": uso_medido,
             "error_tipo": err_tipo,
             "stdout": stdout,
             "stderr": stderr,
@@ -110,7 +112,7 @@ def run_cmd(
         err_console.print("[bold yellow]--- STDERR ---[/bold yellow]")
         err_console.print(f"[red]{stderr}[/red]", end="" if stderr.endswith("\n") else "\n")
     if err_tipo:
-        err_console.print(f"\n[bold red]Terminado con señal / error: {err_tipo} ({t_ms:.1f} ms, CPU: {cpu_us} μs, RSS: {rss_kb} KB)[/bold red]")
+        err_console.print(f"\n[bold red]Terminado con señal / error: {err_tipo} ({t_ms:.1f} ms, CPU: {cpu_us if uso_medido else 'N/D'} μs, RSS: {rss_kb if uso_medido else 'N/D'} KB)[/bold red]")
 
     raise typer.Exit(code=_codigo_de_salida(ret, err_tipo, propagar_codigo))
 
@@ -132,7 +134,7 @@ def generar_seccion_markdown(reporte) -> str:
             diag = "OK" if r.paso else (r.diff_lineas[0].strip() if r.diff_lineas else r.stderr_obtenido[:40] or "Salida distinta")
             if r.hal_diagnostico:
                 diag += f" | HAL: {r.hal_diagnostico}"
-            lines.append(f"| `{r.nombre}` | **{st}** | `{r.codigo_retorno}` | {r.tiempo_ms:.1f} ms | {r.cpu_tiempo_us} | {r.max_rss_kb} | {diag} |")
+            lines.append(f"| `{r.nombre}` | **{st}** | `{r.codigo_retorno}` | {r.tiempo_ms:.1f} ms | {r.cpu_tiempo_us if r.uso_medido else 'N/D'} | {r.max_rss_kb if r.uso_medido else 'N/D'} | {diag} |")
         lines.append("")
     return "\n".join(lines)
 
@@ -189,7 +191,7 @@ def test_cmd(
     for r in reporte.resultados:
         res_str = "[bold green]PASS[/bold green]" if r.paso else f"[bold red]FAIL ({r.error_tipo})[/bold red]"
         detalle = "Coincidencia exacta" if r.paso else (r.diff_lineas[0].strip() if r.diff_lineas else r.stderr_obtenido[:40])
-        tabla.add_row(r.nombre, res_str, str(r.codigo_retorno), f"{r.tiempo_ms:.1f} ms", str(r.cpu_tiempo_us), str(r.max_rss_kb), detalle)
+        tabla.add_row(r.nombre, res_str, str(r.codigo_retorno), f"{r.tiempo_ms:.1f} ms", str(r.cpu_tiempo_us) if r.uso_medido else "N/D", str(r.max_rss_kb) if r.uso_medido else "N/D", detalle)
 
     console.print(tabla)
 

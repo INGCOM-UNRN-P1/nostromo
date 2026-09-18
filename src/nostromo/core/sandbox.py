@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import resource
 import shutil
@@ -21,6 +22,7 @@ class ResultadoEjecucion(tuple):
     error_tipo: Optional[str]
     cpu_tiempo_us: int
     max_rss_kb: int
+    uso_medido: bool
 
     def __new__(
         cls,
@@ -31,6 +33,7 @@ class ResultadoEjecucion(tuple):
         error_tipo: Optional[str],
         cpu_tiempo_us: int = 0,
         max_rss_kb: int = 0,
+        uso_medido: bool = True,
     ):
         instance = super().__new__(cls, (codigo_retorno, stdout, stderr, tiempo_ms, error_tipo))
         instance.codigo_retorno = codigo_retorno
@@ -40,34 +43,63 @@ class ResultadoEjecucion(tuple):
         instance.error_tipo = error_tipo
         instance.cpu_tiempo_us = cpu_tiempo_us
         instance.max_rss_kb = max_rss_kb
+        instance.uso_medido = uso_medido
         return instance
 
 
-def _configurar_limites(memoria_mb: int):
-    """Configura límites de memoria virtual y de datos del proceso hijo vía setrlimit (POSIX)."""
+def _configurar_limites(memoria_mb: int, cpu_segundos: int, archivo_mb: int, limitar_memoria: bool = True):
+    """Configura límites del proceso hijo vía setrlimit (POSIX).
+
+    - memoria virtual y segmento de datos (`limitar_memoria`; con el lanzador de
+      medición los aplica él mismo al programa, no a sí mismo);
+    - tiempo de CPU: a diferencia del timeout de pared, corta un programa con
+      varios hilos que gasta N segundos de CPU por segundo de reloj;
+    - tamaño de cada archivo escrito (incluida la salida estándar): un bucle
+      que imprime sin parar llenaba el disco hasta el timeout.
+    """
     def preexec_fn():
         bytes_max = memoria_mb * 1024 * 1024
-        try:
-            # Límite estricto de memoria virtual (ulimit -v)
-            resource.setrlimit(resource.RLIMIT_AS, (bytes_max, bytes_max))
-        except (ValueError, resource.error):
-            pass
-        try:
-            # Límite de segmento de datos (heap)
-            resource.setrlimit(resource.RLIMIT_DATA, (bytes_max, bytes_max))
-        except (ValueError, resource.error):
-            pass
-        # Desactivar generación de core dumps gigantes en tests
-        try:
-            resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-        except (ValueError, resource.error):
-            pass
+        limites = [
+            (resource.RLIMIT_CPU, (cpu_segundos, cpu_segundos + 1)),  # SIGXCPU y luego SIGKILL
+            (resource.RLIMIT_FSIZE, (archivo_mb * 1024 * 1024, archivo_mb * 1024 * 1024)),
+            (resource.RLIMIT_CORE, (0, 0)),  # sin core dumps gigantes en tests
+        ]
+        if limitar_memoria:
+            limites += [
+                (resource.RLIMIT_AS, (bytes_max, bytes_max)),    # memoria virtual (ulimit -v)
+                (resource.RLIMIT_DATA, (bytes_max, bytes_max)),  # segmento de datos (heap)
+            ]
+        for recurso, valores in limites:
+            try:
+                resource.setrlimit(recurso, valores)
+            except (ValueError, resource.error):
+                pass
     return preexec_fn
+
+
+_MEDIDOR = Path(__file__).with_name("_medidor.py")
+_PYTHON_DEL_SISTEMA = ("/usr/bin/python3", "/bin/python3", "/usr/local/bin/python3")
+
+
+def _python_del_sistema() -> Optional[str]:
+    """Intérprete visible dentro del sandbox (que solo monta /usr, /lib y /bin)."""
+    for candidato in _PYTHON_DEL_SISTEMA:
+        if os.path.exists(candidato):
+            return candidato
+    return None
+
+
+def _leer_medicion(archivo: Path) -> Optional[Tuple[int, int]]:
+    try:
+        utime, stime, maxrss = archivo.read_text().split()
+        return int((float(utime) + float(stime)) * 1_000_000), int(maxrss)
+    except (OSError, ValueError):
+        return None
 
 
 # Nombres de las señales que interesan pedagógicamente; el resto se reporta
 # como SIGNAL_<n>.
-_SENALES = {11: "SEGFAULT", 6: "ABORT", 8: "FPE"}
+_SENALES = {11: "SEGFAULT", 6: "ABORT", 8: "FPE", 24: "CPU_LIMIT", 25: "FILE_SIZE_LIMIT"}
 
 
 def clasificar_terminacion(codigo_retorno: int, bajo_bwrap: bool) -> Optional[str]:
@@ -149,13 +181,22 @@ def ejecutar_aislado(
     timeout_segundos: float = 2.0,
     memoria_mb: int = 128,
     usar_bwrap: bool = True,
+    archivo_mb: int = 16,
 ) -> ResultadoEjecucion:
-    """Ejecuta un binario de forma aislada retornando ResultadoEjecucion."""
+    """Ejecuta un binario de forma aislada retornando ResultadoEjecucion.
+
+    Límites: memoria (`memoria_mb`), tiempo de pared (`timeout_segundos`), tiempo
+    de CPU (el timeout redondeado hacia arriba más un segundo) y tamaño de cada
+    archivo escrito (`archivo_mb`, incluida la salida estándar).
+    """
     binario = Path(binario).resolve()
     if not binario.is_file():
         return ResultadoEjecucion(1, "", f"El binario no existe: {binario}", 0.0, "FILE_NOT_FOUND", 0, 0)
 
     bwrap_bin = shutil.which("bwrap") if usar_bwrap else None
+    python_sandbox = _python_del_sistema() if bwrap_bin else None
+    medicion: Optional[Path] = None
+    directorio_medicion: Optional[str] = None
     t0 = time.perf_counter()
 
     if bwrap_bin:
@@ -170,12 +211,27 @@ def ejecutar_aislado(
             "--dev", "/dev",
             "--unshare-all",
             "--die-with-parent",
-            str(binario),
-        ] + (args or [])
+        ]
+        if python_sandbox:
+            directorio_medicion = tempfile.mkdtemp(prefix="nostromo-uso-")
+            medicion = Path(directorio_medicion) / "uso"
+            cmd += [
+                "--bind", directorio_medicion, directorio_medicion,
+                "--ro-bind", str(_MEDIDOR), str(_MEDIDOR),
+                python_sandbox, "-S", "-E", str(_MEDIDOR),
+                str(medicion), str(memoria_mb * 1024 * 1024), str(binario),
+            ] + (args or [])
+        else:
+            cmd += [str(binario)] + (args or [])
     else:
         cmd = [str(binario)] + (args or [])
 
-    preexec = _configurar_limites(memoria_mb)
+    preexec = _configurar_limites(
+        memoria_mb,
+        cpu_segundos=max(1, math.ceil(timeout_segundos)) + 1,
+        archivo_mb=archivo_mb,
+        limitar_memoria=python_sandbox is None,
+    )
 
     try:
         ret, stdout, stderr, cpu_us, max_rss, expirado = _ejecutar_midiendo(
@@ -183,14 +239,28 @@ def ejecutar_aislado(
         )
         t_ms = (time.perf_counter() - t0) * 1000.0
 
+        # Bajo bwrap el `rusage` que devuelve wait4 es el del lanzador, no el del
+        # programa. Si hay lanzador de medición se usa su registro; si no, el
+        # consumo queda como no medido en vez de mostrar el del sandbox.
+        uso_medido = True
+        if bwrap_bin:
+            leido = _leer_medicion(medicion) if medicion else None
+            if leido is not None:
+                cpu_us, max_rss = leido
+            else:
+                cpu_us, max_rss, uso_medido = 0, 0, False
+
         if expirado:
             return ResultadoEjecucion(
-                124, "", "Tiempo límite de ejecución excedido (Timeout).", t_ms, "TIMEOUT", cpu_us, max_rss
+                124, "", "Tiempo límite de ejecución excedido (Timeout).", t_ms, "TIMEOUT", cpu_us, max_rss, uso_medido
             )
 
         err_tipo = clasificar_terminacion(ret, bajo_bwrap=bool(bwrap_bin))
-        return ResultadoEjecucion(ret, stdout, stderr, t_ms, err_tipo, cpu_us, max_rss)
+        return ResultadoEjecucion(ret, stdout, stderr, t_ms, err_tipo, cpu_us, max_rss, uso_medido)
 
     except Exception as e:
         t_ms = (time.perf_counter() - t0) * 1000.0
-        return ResultadoEjecucion(1, "", str(e), t_ms, "EXCEPTION", 0, 0)
+        return ResultadoEjecucion(1, "", str(e), t_ms, "EXCEPTION", 0, 0, False)
+    finally:
+        if directorio_medicion:
+            shutil.rmtree(directorio_medicion, ignore_errors=True)
