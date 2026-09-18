@@ -39,8 +39,13 @@ def test_un_caso_liviano_no_hereda_el_pico_de_uno_pesado(tmp_path):
     r_pesado = ejecutar_aislado(pesado, memoria_mb=512, usar_bwrap=False)
     r_liviano = ejecutar_aislado(liviano, memoria_mb=512, usar_bwrap=False)
 
+    # El piso no es cero: `ru_maxrss` de un hijo incluye el RSS del proceso padre
+    # al hacer `fork`, antes del `exec`, así que depende de qué tan grande sea el
+    # intérprete que ejecuta la prueba. Lo que importa es la diferencia: el
+    # pesado reserva 60 MB más que el piso, y el liviano no puede heredarlos.
     assert r_pesado.max_rss_kb > 50 * 1024, "el caso pesado debe medir su propio pico"
-    assert r_liviano.max_rss_kb < 20 * 1024, "el liviano no puede heredar el del pesado"
+    assert r_liviano.max_rss_kb < r_pesado.max_rss_kb / 2, "el liviano no puede heredar el del pesado"
+    assert r_pesado.max_rss_kb - r_liviano.max_rss_kb > 30 * 1024
 
 
 @necesita_gcc
@@ -51,7 +56,7 @@ def test_el_orden_de_ejecucion_no_altera_la_medicion(tmp_path):
     antes = ejecutar_aislado(liviano, usar_bwrap=False).max_rss_kb
     ejecutar_aislado(pesado, memoria_mb=512, usar_bwrap=False)
     despues = ejecutar_aislado(liviano, usar_bwrap=False).max_rss_kb
-    assert abs(despues - antes) < 4 * 1024
+    assert abs(despues - antes) < 8 * 1024
 
 
 @necesita_gcc
