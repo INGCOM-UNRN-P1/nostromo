@@ -6,6 +6,7 @@ import os
 import resource
 import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -93,6 +94,54 @@ def clasificar_terminacion(codigo_retorno: int, bajo_bwrap: bool) -> Optional[st
     return "NON_ZERO"
 
 
+def _ejecutar_midiendo(cmd, stdin_texto, timeout_segundos, preexec):
+    """Ejecuta `cmd` y devuelve (retorno, stdout, stderr, cpu_us, max_rss_kb, timeout).
+
+    El uso de recursos sale de `os.wait4` sobre ESE hijo. Antes se leía
+    `getrusage(RUSAGE_CHILDREN).ru_maxrss`, que es el máximo acumulado de todos
+    los hijos esperados por el proceso: en una suite, un caso liviano heredaba el
+    pico de uno anterior y aparecía con esa memoria (lo consumen la heurística
+    de fuga y las columnas de RAM del reporte).
+
+    Para poder llamar a `wait4` sin que `communicate()` compita por el mismo
+    `waitpid`, la entrada y las salidas viajan por archivos temporales en lugar
+    de pipes.
+    """
+    with tempfile.TemporaryFile() as fin, tempfile.TemporaryFile() as fout, tempfile.TemporaryFile() as ferr:
+        fin.write((stdin_texto or "").encode("utf-8", errors="replace"))
+        fin.seek(0)
+
+        proc = subprocess.Popen(cmd, stdin=fin, stdout=fout, stderr=ferr, preexec_fn=preexec)
+        limite = time.monotonic() + timeout_segundos
+        expirado = False
+        espera = 0.001
+
+        while True:
+            pid, estado, uso = os.wait4(proc.pid, os.WNOHANG)
+            if pid:
+                break
+            if time.monotonic() >= limite:
+                proc.kill()
+                pid, estado, uso = os.wait4(proc.pid, 0)
+                expirado = True
+                break
+            time.sleep(espera)
+            espera = min(espera * 2, 0.02)
+
+        retorno = os.waitstatus_to_exitcode(estado)
+        # `wait4` ya recogió al hijo: se fija el código para que Popen no intente
+        # esperarlo de nuevo ni avise de un proceso "todavía corriendo".
+        proc.returncode = retorno
+
+        fout.seek(0)
+        ferr.seek(0)
+        stdout = fout.read().decode("utf-8", errors="replace")
+        stderr = ferr.read().decode("utf-8", errors="replace")
+
+    cpu_us = int((uso.ru_utime + uso.ru_stime) * 1_000_000)
+    return retorno, stdout, stderr, cpu_us, uso.ru_maxrss, expirado
+
+
 def ejecutar_aislado(
     binario: Path,
     args: Optional[List[str]] = None,
@@ -127,32 +176,21 @@ def ejecutar_aislado(
         cmd = [str(binario)] + (args or [])
 
     preexec = _configurar_limites(memoria_mb)
-    ru_before = resource.getrusage(resource.RUSAGE_CHILDREN)
 
     try:
-        res = subprocess.run(
-            cmd,
-            input=stdin_texto,
-            capture_output=True,
-            text=True,
-            timeout=timeout_segundos,
-            preexec_fn=preexec,
+        ret, stdout, stderr, cpu_us, max_rss, expirado = _ejecutar_midiendo(
+            cmd, stdin_texto, timeout_segundos, preexec
         )
         t_ms = (time.perf_counter() - t0) * 1000.0
-        ru_after = resource.getrusage(resource.RUSAGE_CHILDREN)
-        cpu_us = int(((ru_after.ru_utime - ru_before.ru_utime) + (ru_after.ru_stime - ru_before.ru_stime)) * 1_000_000)
-        max_rss = ru_after.ru_maxrss
 
-        ret = res.returncode
+        if expirado:
+            return ResultadoEjecucion(
+                124, "", "Tiempo límite de ejecución excedido (Timeout).", t_ms, "TIMEOUT", cpu_us, max_rss
+            )
+
         err_tipo = clasificar_terminacion(ret, bajo_bwrap=bool(bwrap_bin))
+        return ResultadoEjecucion(ret, stdout, stderr, t_ms, err_tipo, cpu_us, max_rss)
 
-        return ResultadoEjecucion(ret, res.stdout, res.stderr, t_ms, err_tipo, cpu_us, max_rss)
-
-    except subprocess.TimeoutExpired:
-        t_ms = (time.perf_counter() - t0) * 1000.0
-        ru_after = resource.getrusage(resource.RUSAGE_CHILDREN)
-        cpu_us = int(((ru_after.ru_utime - ru_before.ru_utime) + (ru_after.ru_stime - ru_before.ru_stime)) * 1_000_000)
-        return ResultadoEjecucion(124, "", "Tiempo límite de ejecución excedido (Timeout).", t_ms, "TIMEOUT", cpu_us, ru_after.ru_maxrss)
     except Exception as e:
         t_ms = (time.perf_counter() - t0) * 1000.0
         return ResultadoEjecucion(1, "", str(e), t_ms, "EXCEPTION", 0, 0)
