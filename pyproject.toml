@@ -45,7 +45,12 @@ nostromo = "nostromo.cli:main"
 [project.entry-points."ripley.plugins"]
 sandbox = "nostromo.ripley_plugin:NostromoPlugin"
 
-[project.optional-dependencies]
+[dependency-groups]
+# En `dependency-groups` (PEP 735) y no en `optional-dependencies`: uv instala
+# este grupo con un `uv sync` a secas, de modo que el venv del repo queda listo
+# para correr la suite. Como extra opcional había que acordarse de
+# `--extra dev`, y sin eso `.venv/bin/python -m pytest` fallaba con
+# "No module named pytest".
 dev = [
     "pytest>=7.4.0",
 ]
