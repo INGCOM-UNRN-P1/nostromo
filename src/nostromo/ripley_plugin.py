@@ -45,7 +45,7 @@ class NostromoPlugin:
             cases_list.append({
                 "name": r.nombre,
                 "passed": r.paso,
-                "input_data": getattr(r, "stdout_esperado", ""),
+                "input_data": r.stdin_texto,
                 "expected_output": getattr(r, "stdout_esperado", ""),
                 "actual_output": getattr(r, "stdout_obtenido", ""),
                 "timed_out": (r.error_tipo == "TIMEOUT"),

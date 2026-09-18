@@ -31,6 +31,7 @@ class ResultadoCaso:
     stderr_obtenido: str
     stdout_esperado: str
     error_tipo: Optional[str] = None   # "TIMEOUT", "OOM", "SEGFAULT", "DIFF", "NON_ZERO"
+    stdin_texto: str = ""
     diff_lineas: List[str] = field(default_factory=list)
     diff_lado_a_lado: List[Tuple[str, str]] = field(default_factory=list)
     cpu_tiempo_us: int = 0
@@ -48,6 +49,7 @@ class ResultadoCaso:
             "max_rss_kb": self.max_rss_kb,
             "posible_leak": self.posible_leak,
             "error_tipo": self.error_tipo,
+            "stdin_texto": self.stdin_texto[:500],
             "stdout_obtenido": self.stdout_obtenido[:500],
             "stdout_esperado": self.stdout_esperado[:500],
             "stderr_obtenido": self.stderr_obtenido[:500],

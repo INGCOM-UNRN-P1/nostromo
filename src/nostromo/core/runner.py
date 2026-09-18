@@ -193,6 +193,7 @@ def evaluar_binario(
             stdout_obtenido=stdout,
             stderr_obtenido=stderr,
             stdout_esperado=c.stdout_esperado,
+            stdin_texto=c.stdin_texto,
             error_tipo=err_tipo if not paso else None,
             diff_lineas=diff_lines,
             diff_lado_a_lado=diff_side,
