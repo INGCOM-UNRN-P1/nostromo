@@ -47,6 +47,21 @@ def main_callback(
     pass
 
 
+def _codigo_de_salida(ret: int, err_tipo: Optional[str], propagar: bool) -> int:
+    """Contrato 0/1/2 de la CLI: 0 el programa terminó bien, 1 falló, 2 no se pudo ejecutar.
+
+    Antes `run` devolvía el código del programa evaluado tal cual (139, o 245 para
+    una señal), y un script no podía distinguir un fallo de nostromo de un retorno
+    arbitrario del estudiante. Con `--exit-code` se conserva la transparencia de
+    `env`/`timeout`: el código del programa, con la señal como 128+n.
+    """
+    if err_tipo in ("FILE_NOT_FOUND", "EXCEPTION"):
+        return 2
+    if propagar:
+        return ret if 0 <= ret <= 255 else (128 + -ret if ret < 0 else ret & 0xFF)
+    return 0 if ret == 0 and not err_tipo else 1
+
+
 @app.command("run")
 def run_cmd(
     binario: Path = typer.Argument(..., help="Binario ejecutable a correr."),
@@ -55,8 +70,14 @@ def run_cmd(
     timeout: float = typer.Option(2.0, "--timeout", "-t", help="Timeout máximo en segundos."),
     memory: int = typer.Option(128, "--memory", "-m", help="Límite de memoria en Megabytes."),
     json_output: bool = typer.Option(False, "--json", help="Salida en JSON."),
+    propagar_codigo: bool = typer.Option(False, "--exit-code", help="Salir con el código del programa (señal = 128+n) en vez de 0/1/2."),
 ) -> None:
-    """Ejecuta un binario dentro del sandbox con límites estrictos de CPU y memoria."""
+    """Ejecuta un binario dentro del sandbox con límites estrictos de CPU y memoria.
+
+    Sale con 0 si el programa terminó bien, 1 si falló (retorno distinto de cero,
+    señal o timeout) y 2 si no se pudo ejecutar; el código del programa está en el
+    JSON (`codigo_retorno`) o se obtiene con --exit-code.
+    """
     res = ejecutar_aislado(
         binario=binario,
         args=args or [],
@@ -80,7 +101,7 @@ def run_cmd(
             "stderr": stderr,
         }
         print(json.dumps(data, indent=2, ensure_ascii=False))
-        raise typer.Exit(code=ret if ret != 0 else 0)
+        raise typer.Exit(code=_codigo_de_salida(ret, err_tipo, propagar_codigo))
 
     if stdout:
         console.print("[bold green]--- STDOUT ---[/bold green]")
@@ -91,7 +112,7 @@ def run_cmd(
     if err_tipo:
         err_console.print(f"\n[bold red]Terminado con señal / error: {err_tipo} ({t_ms:.1f} ms, CPU: {cpu_us} μs, RSS: {rss_kb} KB)[/bold red]")
 
-    raise typer.Exit(code=ret if ret != 0 else 0)
+    raise typer.Exit(code=_codigo_de_salida(ret, err_tipo, propagar_codigo))
 
 
 def generar_seccion_markdown(reporte) -> str:
