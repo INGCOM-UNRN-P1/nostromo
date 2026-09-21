@@ -7,11 +7,19 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from nostromo import __version__
+from nostromo.core.models import SCHEMA_VERSION
 from nostromo.core.runner import descubrir_casos_prueba, evaluar_binario
 
 
 class NostromoPlugin:
-    """Plugin de ejecución en Sandbox y evaluación de testcases para Ripley."""
+    """Plugin de ejecución en Sandbox y evaluación de testcases para Ripley.
+
+    Contrato de `execute` (`schema_version` 1.0.0): las claves canónicas son las
+    inglesas (`total`, `passed`, `failed`, `cases`, y `name`/`passed` en cada
+    caso), que es lo que lee ripley. Las españolas (`total_casos`, `aprobados`,
+    `fallidos`, `casos`) son alias de compatibilidad con consumidores anteriores
+    y se conservan idénticas; no agregar claves nuevas solo en español.
+    """
 
     name = "sandbox"
     version = __version__
@@ -37,7 +45,7 @@ class NostromoPlugin:
 
         casos = descubrir_casos_prueba(testcases_dir)
         if not casos:
-            return {"ok": True, "total_casos": 0, "total": 0, "aprobados": 0, "passed": 0, "fallidos": 0, "failed": 0, "casos": [], "cases": [], "observaciones": []}
+            return {"schema_version": SCHEMA_VERSION, "ok": True, "total_casos": 0, "total": 0, "aprobados": 0, "passed": 0, "fallidos": 0, "failed": 0, "casos": [], "cases": [], "observaciones": []}
 
         rep = evaluar_binario(binario, casos)
         observaciones = []
@@ -68,6 +76,7 @@ class NostromoPlugin:
                 })
 
         return {
+            "schema_version": SCHEMA_VERSION,
             "ok": rep.ok,
             "total_casos": rep.total_casos,
             "total": rep.total_casos,
