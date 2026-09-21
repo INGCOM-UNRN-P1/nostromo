@@ -6,14 +6,15 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict, List
 
+from nostromo import __version__
 from nostromo.core.runner import descubrir_casos_prueba, evaluar_binario
 
 
 class NostromoPlugin:
     """Plugin de ejecución en Sandbox y evaluación de testcases para Ripley."""
 
-    name = "sandbox_runner"
-    version = "0.1.0"
+    name = "sandbox"
+    version = __version__
 
     def is_available(self) -> bool:
         return True
