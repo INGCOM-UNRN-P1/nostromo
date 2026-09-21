@@ -7,7 +7,7 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from nostromo.core.models import CasoPrueba, ReporteEvaluacion, ResultadoCaso
 from nostromo.core.sandbox import ejecutar_aislado
