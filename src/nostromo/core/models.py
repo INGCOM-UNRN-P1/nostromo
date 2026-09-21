@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+SCHEMA_VERSION = "1.0.0"
+
 
 @dataclass
 class CasoPrueba:

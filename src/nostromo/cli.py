@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 from pathlib import Path
 from typing import List, Optional
 
@@ -14,7 +15,8 @@ from rich.table import Table
 
 from nostromo import __version__
 from nostromo.core.runner import descubrir_casos_prueba, evaluar_binario
-from nostromo.core.sandbox import ejecutar_aislado
+from nostromo.core.models import SCHEMA_VERSION
+from nostromo.core.sandbox import _binds_del_sistema, _python_del_sistema, ejecutar_aislado
 
 console = Console()
 err_console = Console(stderr=True)
@@ -315,17 +317,59 @@ def stress_cmd(
     raise typer.Exit(code=0 if fallos == 0 else 1)
 
 
+def _bwrap_funciona(bwrap: str) -> bool:
+    """Que el binario exista no basta: sin user namespaces `bwrap` aborta al arrancar."""
+    try:
+        proc = subprocess.run(
+            [bwrap, *_binds_del_sistema(), "--unshare-all", "--die-with-parent", "/bin/true"],
+            capture_output=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0
+
+
 @app.command("doctor")
-def doctor_cmd() -> None:
-    """Verifica disponibilidad del motor de sandbox (Bubblewrap / namespaces del kernel)."""
+def doctor_cmd(
+    json_output: bool = typer.Option(False, "--json", help="Diagnóstico en JSON."),
+) -> None:
+    """Verifica el aislamiento del sandbox (Bubblewrap) y sale 1 si no está operativo."""
+    bwrap = shutil.which("bwrap")
+    bwrap_ok = bool(bwrap) and _bwrap_funciona(bwrap)
+    python_ok = _python_del_sistema() is not None
+    componentes = [
+        {
+            "componente": "Bubblewrap (bwrap)",
+            "estado": "OK" if bwrap_ok else "ERROR",
+            "requerido": True,
+            "detalle": bwrap if bwrap_ok else (
+                f"{bwrap} no arranca (¿user namespaces deshabilitados?)" if bwrap
+                else "Ausente: sin aislamiento fuerte (solo setrlimit). Instalar bubblewrap"
+            ),
+        },
+        {
+            "componente": "python3 del sistema (medición de consumo)",
+            "estado": "OK" if python_ok else "ADVERTENCIA",
+            "requerido": False,
+            "detalle": "disponible" if python_ok else "Ausente: el consumo bajo bwrap se informa como N/D",
+        },
+    ]
+    ok = bwrap_ok
+
+    if json_output:
+        print(json.dumps({"schema_version": SCHEMA_VERSION, "herramienta": "nostromo", "ok": ok, "componentes": componentes}, indent=2, ensure_ascii=False))
+        raise typer.Exit(code=0 if ok else 1)
+
     tabla = Table(title="Diagnóstico del Sandbox NOSTROMO")
     tabla.add_column("Componente", style="bold cyan")
     tabla.add_column("Estado", justify="center")
     tabla.add_column("Detalle")
-
-    bwrap = shutil.which("bwrap")
-    tabla.add_row("Bubblewrap (bwrap)", "[green]✓ Presente[/green]" if bwrap else "[yellow]⚠️ Ausente (fallback a setrlimit)[/yellow]", bwrap or "Instalar bubblewrap con sudo apt install bubblewrap")
+    colores = {"OK": "green", "ADVERTENCIA": "yellow", "ERROR": "red"}
+    for c in componentes:
+        color = colores[c["estado"]]
+        tabla.add_row(c["componente"], f"[{color}]{c['estado']}[/{color}]", c["detalle"])
     console.print(tabla)
+    raise typer.Exit(code=0 if ok else 1)
 
 
 @app.command("report")
