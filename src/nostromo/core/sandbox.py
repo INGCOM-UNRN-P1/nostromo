@@ -77,6 +77,23 @@ def _configurar_limites(memoria_mb: int, cpu_segundos: int, archivo_mb: int, lim
     return preexec_fn
 
 
+_DIRECTORIOS_DEL_SISTEMA = ("/usr", "/lib", "/lib64", "/bin")
+
+
+def _binds_del_sistema(existe=os.path.exists) -> List[str]:
+    """Argumentos `--ro-bind` de los directorios del sistema que existen.
+
+    `bwrap` aborta si el origen de un bind no existe, y en distribuciones sin
+    `/lib64` (o donde `/lib` es un enlace a `/usr/lib`) el bind fijo dejaba al
+    sandbox sin arrancar. Cada directorio se monta sobre sí mismo, solo si está.
+    """
+    args: List[str] = []
+    for directorio in _DIRECTORIOS_DEL_SISTEMA:
+        if existe(directorio):
+            args += ["--ro-bind", directorio, directorio]
+    return args
+
+
 _MEDIDOR = Path(__file__).with_name("_medidor.py")
 _PYTHON_DEL_SISTEMA = ("/usr/bin/python3", "/bin/python3", "/usr/local/bin/python3")
 
@@ -202,10 +219,7 @@ def ejecutar_aislado(
     if bwrap_bin:
         cmd = [
             bwrap_bin,
-            "--ro-bind", "/usr", "/usr",
-            "--ro-bind", "/lib", "/lib",
-            "--ro-bind", "/lib64", "/lib64" if os.path.exists("/lib64") else "/lib",
-            "--ro-bind", "/bin", "/bin",
+            *_binds_del_sistema(),
             "--ro-bind", str(binario.parent), str(binario.parent),
             "--proc", "/proc",
             "--dev", "/dev",
