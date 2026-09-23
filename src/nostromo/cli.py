@@ -121,7 +121,11 @@ def run_cmd(
 
 def generar_seccion_markdown(reporte) -> str:
     """Genera sección de evaluación en sandbox de casos de prueba para Dredd."""
-    lines = ["## Pruebas Funcionales en Sandbox (Nostromo)\n"]
+    status = "ok" if reporte.ok else "fail"
+    lines = [
+        f"<!-- dredd-section: nostromo, tool=nostromo, version=1.0.0, status={status} -->\n",
+        "## Pruebas Funcionales en Sandbox (Nostromo)\n",
+    ]
     lines.append(f"- **Binario evaluado:** `{reporte.binario.name}`")
     lines.append(f"- **Casos de prueba evaluados:** {reporte.total_casos}")
     lines.append(f"- **Aprobados:** {reporte.casos_aprobados}/{reporte.total_casos} ({reporte.porcentaje_aprobacion:.1f}%)\n")
@@ -136,7 +140,9 @@ def generar_seccion_markdown(reporte) -> str:
             diag = "OK" if r.paso else (r.diff_lineas[0].strip() if r.diff_lineas else r.stderr_obtenido[:40] or "Salida distinta")
             if r.hal_diagnostico:
                 diag += f" | HAL: {r.hal_diagnostico}"
-            lines.append(f"| `{r.nombre}` | **{st}** | `{r.codigo_retorno}` | {r.tiempo_ms:.1f} ms | {r.cpu_tiempo_us if r.uso_medido else 'N/D'} | {r.max_rss_kb if r.uso_medido else 'N/D'} | {diag} |")
+            nom_limpio = str(r.nombre).replace("|", "&#124;")
+            diag_limpio = str(diag).replace("|", "&#124;")
+            lines.append(f"| `{nom_limpio}` | **{st}** | `{r.codigo_retorno}` | {r.tiempo_ms:.1f} ms | {r.cpu_tiempo_us if r.uso_medido else 'N/D'} | {r.max_rss_kb if r.uso_medido else 'N/D'} | {diag_limpio} |")
         lines.append("")
     return "\n".join(lines)
 
