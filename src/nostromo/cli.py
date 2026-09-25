@@ -22,6 +22,7 @@ console = Console()
 err_console = Console(stderr=True)
 
 app = typer.Typer(
+    context_settings={"help_option_names": ["-h", "--help"]},
     name="nostromo",
     help="📦 NOSTROMO — Sandbox de ejecución aislada con Bubblewrap y evaluador de casos de prueba .in/.out.",
     add_completion=True,
