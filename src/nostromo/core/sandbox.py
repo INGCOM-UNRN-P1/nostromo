@@ -106,6 +106,45 @@ def _python_del_sistema() -> Optional[str]:
     return None
 
 
+_BWRAP_FLAGS_CACHE: Optional[List[str]] = None
+
+
+def _bwrap_flags_aislamiento(bwrap_bin: str) -> List[str]:
+    """Devuelve las banderas de aislamiento de namespaces compatibles con el host.
+
+    En runners de CI o entornos contenerizados sin CAP_NET_ADMIN, `--unshare-all`
+    (que incluye `--unshare-net` y configura loopback) falla con:
+    `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`.
+    En ese caso se aísla IPC, PID, UTS y user sin intentar configurar loopback.
+    """
+    global _BWRAP_FLAGS_CACHE
+    if _BWRAP_FLAGS_CACHE is not None:
+        return list(_BWRAP_FLAGS_CACHE)
+
+    try:
+        res = subprocess.run(
+            [bwrap_bin, "--unshare-all", "--ro-bind", "/usr", "/usr", "--proc", "/proc", "--dev", "/dev", "true"],
+            capture_output=True,
+            timeout=2.0,
+            check=False,
+        )
+        if res.returncode == 0:
+            _BWRAP_FLAGS_CACHE = ["--unshare-all"]
+            return list(_BWRAP_FLAGS_CACHE)
+    except Exception:
+        pass
+
+    # Fallback sin --unshare-net para runners sin privilegios de red
+    _BWRAP_FLAGS_CACHE = [
+        "--unshare-user",
+        "--unshare-ipc",
+        "--unshare-pid",
+        "--unshare-uts",
+        "--unshare-cgroup-try",
+    ]
+    return list(_BWRAP_FLAGS_CACHE)
+
+
 def _leer_medicion(archivo: Path) -> Optional[Tuple[int, int]]:
     try:
         utime, stime, maxrss = archivo.read_text().split()
@@ -223,7 +262,7 @@ def ejecutar_aislado(
             "--ro-bind", str(binario.parent), str(binario.parent),
             "--proc", "/proc",
             "--dev", "/dev",
-            "--unshare-all",
+            *_bwrap_flags_aislamiento(bwrap_bin),
             "--die-with-parent",
         ]
         if python_sandbox:
