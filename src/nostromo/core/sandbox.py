@@ -47,11 +47,29 @@ class ResultadoEjecucion(tuple):
         return instance
 
 
-def _configurar_limites(memoria_mb: int, cpu_segundos: int, archivo_mb: int, limitar_memoria: bool = True):
-    """Configura límites del proceso hijo vía setrlimit (POSIX).
+def _es_binario_asan(binario: Path) -> bool:
+    try:
+        with open(binario, "rb") as f:
+            bloque = f.read(512 * 1024)
+            if b"libasan" in bloque or b"__asan" in bloque:
+                return True
+            f.seek(0, os.SEEK_END)
+            tamano = f.tell()
+            if tamano > 512 * 1024:
+                f.seek(max(0, tamano - 64 * 1024))
+                if b"libasan" in f.read() or b"__asan" in f.read():
+                    return True
+    except Exception:
+        pass
+    return False
 
-    - memoria virtual y segmento de datos (`limitar_memoria`; con el lanzador de
-      medición los aplica él mismo al programa, no a sí mismo);
+
+def _configurar_limites(memoria_mb: int, cpu_segundos: int, archivo_mb: int, limitar_memoria: bool, limitar_as: bool = True):
+    """Devuelve un `preexec_fn` que aplica límites POSIX al hijo.
+
+    - memoria (virtual y heap): un leak o un búfer de tamaño ridículo fallan de
+      inmediato en `malloc`/`brk` en lugar de tumbar la máquina por OOM; si el
+      binario está instrumentado con AddressSanitizer, se preserva RLIMIT_AS;
     - tiempo de CPU: a diferencia del timeout de pared, corta un programa con
       varios hilos que gasta N segundos de CPU por segundo de reloj;
     - tamaño de cada archivo escrito (incluida la salida estándar): un bucle
@@ -65,16 +83,16 @@ def _configurar_limites(memoria_mb: int, cpu_segundos: int, archivo_mb: int, lim
             (resource.RLIMIT_CORE, (0, 0)),  # sin core dumps gigantes en tests
         ]
         if limitar_memoria:
-            limites += [
-                (resource.RLIMIT_AS, (bytes_max, bytes_max)),    # memoria virtual (ulimit -v)
-                (resource.RLIMIT_DATA, (bytes_max, bytes_max)),  # segmento de datos (heap)
-            ]
+            if limitar_as:
+                limites.append((resource.RLIMIT_AS, (bytes_max, bytes_max)))    # memoria virtual (ulimit -v)
+            limites.append((resource.RLIMIT_DATA, (bytes_max, bytes_max)))  # segmento de datos (heap)
         for recurso, valores in limites:
             try:
                 resource.setrlimit(recurso, valores)
             except (ValueError, resource.error):
                 pass
     return preexec_fn
+
 
 
 _DIRECTORIOS_DEL_SISTEMA = ("/usr", "/lib", "/lib64", "/bin")
@@ -279,11 +297,13 @@ def ejecutar_aislado(
     else:
         cmd = [str(binario)] + (args or [])
 
+    es_asan = _es_binario_asan(binario)
     preexec = _configurar_limites(
         memoria_mb,
         cpu_segundos=max(1, math.ceil(timeout_segundos)) + 1,
         archivo_mb=archivo_mb,
-        limitar_memoria=python_sandbox is None,
+        limitar_memoria=python_sandbox is None and memoria_mb > 0,
+        limitar_as=not es_asan,
     )
 
     try:

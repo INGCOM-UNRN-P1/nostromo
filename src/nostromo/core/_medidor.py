@@ -16,6 +16,23 @@ import signal
 import sys
 
 
+def _es_binario_asan(programa: str) -> bool:
+    try:
+        with open(programa, "rb") as f:
+            bloque = f.read(512 * 1024)
+            if b"libasan" in bloque or b"__asan" in bloque:
+                return True
+            f.seek(0, os.SEEK_END)
+            tamano = f.tell()
+            if tamano > 512 * 1024:
+                f.seek(max(0, tamano - 64 * 1024))
+                if b"libasan" in f.read() or b"__asan" in f.read():
+                    return True
+    except Exception:
+        pass
+    return False
+
+
 def main() -> int:
     destino, memoria, programa, *args = sys.argv[1:]
     limite = int(memoria)
@@ -28,7 +45,11 @@ def main() -> int:
             signal.signal(senal, signal.SIG_DFL)
         # Los límites de memoria se aplican acá y no al lanzador: contando el
         # intérprete de este script, un límite chico impediría hasta arrancar.
-        for recurso in (resource.RLIMIT_AS, resource.RLIMIT_DATA):
+        # Si el binario usa ASan, RLIMIT_AS rompería la reserva de memoria virtual.
+        recursos = [resource.RLIMIT_DATA]
+        if not _es_binario_asan(programa):
+            recursos.append(resource.RLIMIT_AS)
+        for recurso in recursos:
             try:
                 resource.setrlimit(recurso, (limite, limite))
             except (ValueError, OSError):
