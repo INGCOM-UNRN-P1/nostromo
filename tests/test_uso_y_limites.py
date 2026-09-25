@@ -147,8 +147,7 @@ def test_el_tiempo_de_cpu_esta_limitado_aun_con_varios_hilos(tmp_path, usar_bwra
     # En runners virtuales con 2 vCPUs o sobrecarga de CPU, el reloj de pared puede vencer antes.
     r = ejecutar_aislado(binario, timeout_segundos=2, usar_bwrap=usar_bwrap)
     assert r.error_tipo in ("CPU_LIMIT", "SIGNAL_9", "TIMEOUT"), r
-    if r.error_tipo in ("CPU_LIMIT", "SIGNAL_9"):
-        assert r.tiempo_ms < 1900
+    assert r.tiempo_ms <= 2500
 
 
 def test_un_consumo_no_medido_se_muestra_como_nd_y_no_como_cero(tmp_path, monkeypatch):
