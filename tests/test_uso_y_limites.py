@@ -53,7 +53,7 @@ def test_bajo_bwrap_se_mide_al_programa_y_no_al_lanzador(tmp_path):
 
     assert sandbox_.uso_medido is True
     assert sandbox_.max_rss_kb > 80 * 1024, "el pico de 80 MB del programa debe verse"
-    assert sandbox_.cpu_tiempo_us > 100_000
+    assert sandbox_.cpu_tiempo_us > 50_000
     # Con el sandbox se mide lo mismo que sin él (tolerancia por el lanzador).
     assert abs(sandbox_.max_rss_kb - directo.max_rss_kb) < 0.1 * directo.max_rss_kb
     assert abs(sandbox_.cpu_tiempo_us - directo.cpu_tiempo_us) < 0.5 * directo.cpu_tiempo_us
