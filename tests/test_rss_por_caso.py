@@ -18,7 +18,7 @@ necesita_gcc = pytest.mark.skipif(not shutil.which("gcc"), reason="requiere gcc"
 
 PESADO = """#include <stdlib.h>
 #include <string.h>
-int main(void) { size_t n = 60u * 1024 * 1024; char *p = malloc(n); if (!p) return 1; memset(p, 1, n); free(p); return 0; }
+int main(void) { size_t n = 100u * 1024 * 1024; char *p = malloc(n); if (!p) return 1; memset(p, 1, n); free(p); return 0; }
 """
 LIVIANO = "int main(void) { return 0; }\n"
 
