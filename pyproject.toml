@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nostromo"
-version = "0.1.0"
+version = "0.2.0"
 description = "Sandbox de ejecución aislada con Bubblewrap y evaluador de casos de prueba .in/.out"
 readme = "README.md"
 license = {text = "GPL-3.0-or-later"}
