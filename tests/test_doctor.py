@@ -31,3 +31,37 @@ def test_bwrap_presente_pero_que_no_arranca_es_error(monkeypatch):
     res = runner.invoke(cli.app, ["doctor", "--json"])
     assert res.exit_code == 1
     assert "no arranca" in json.loads(res.output)["componentes"][0]["detalle"]
+
+
+def _bwrap_sin_user_namespaces(carpeta, monkeypatch):
+    """Un bwrap instalado que aborta como en Ubuntu ≥ 23.10 con AppArmor."""
+    import os
+
+    from nostromo.core import sandbox
+
+    falso = carpeta / "bwrap"
+    falso.write_text("#!/bin/sh\necho 'bwrap: setting up uid map: Permission denied' >&2\nexit 1\n")
+    falso.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{carpeta}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setattr(sandbox, "_BWRAP_FLAGS_CACHE", None)
+    monkeypatch.setattr(sandbox, "_BWRAP_ARRANCA", {})
+    return str(falso)
+
+
+def test_bwrap_funciona_detecta_el_que_no_arranca(tmp_path, monkeypatch):
+    from nostromo.core.sandbox import bwrap_funciona
+
+    assert bwrap_funciona(_bwrap_sin_user_namespaces(tmp_path, monkeypatch)) is False
+
+
+def test_con_un_bwrap_que_no_arranca_se_ejecuta_sin_el(tmp_path, monkeypatch):
+    # Antes devolvía 1 con el error de bwrap, como si fuera la salida del programa.
+    import shutil
+    from pathlib import Path
+
+    from nostromo.core.sandbox import ejecutar_aislado
+
+    _bwrap_sin_user_namespaces(tmp_path, monkeypatch)
+    res = ejecutar_aislado(Path(shutil.which("true")))
+    assert res.codigo_retorno == 0
+    assert "bwrap" not in res.stderr

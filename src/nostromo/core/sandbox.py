@@ -163,6 +163,30 @@ def _bwrap_flags_aislamiento(bwrap_bin: str) -> List[str]:
     return list(_BWRAP_FLAGS_CACHE)
 
 
+_BWRAP_ARRANCA: dict = {}
+
+
+def bwrap_funciona(bwrap_bin: str) -> bool:
+    """Que `bwrap` esté instalado no basta: sin user namespaces aborta al arrancar.
+
+    Es el caso de Ubuntu ≥ 23.10, donde AppArmor restringe los user namespaces
+    sin privilegios. Se prueba una vez por ruta, con las mismas banderas de
+    aislamiento que usa `ejecutar_aislado`.
+    """
+    if bwrap_bin not in _BWRAP_ARRANCA:
+        try:
+            proc = subprocess.run(
+                [bwrap_bin, *_binds_del_sistema(), *_bwrap_flags_aislamiento(bwrap_bin),
+                 "--die-with-parent", "/bin/true"],
+                capture_output=True,
+                timeout=10,
+            )
+            _BWRAP_ARRANCA[bwrap_bin] = proc.returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            _BWRAP_ARRANCA[bwrap_bin] = False
+    return _BWRAP_ARRANCA[bwrap_bin]
+
+
 def _leer_medicion(archivo: Path) -> Optional[Tuple[int, int]]:
     try:
         utime, stime, maxrss = archivo.read_text().split()
@@ -268,6 +292,11 @@ def ejecutar_aislado(
         return ResultadoEjecucion(1, "", f"El binario no existe: {binario}", 0.0, "FILE_NOT_FOUND", 0, 0)
 
     bwrap_bin = shutil.which("bwrap") if usar_bwrap else None
+    if bwrap_bin and not bwrap_funciona(bwrap_bin):
+        # Instalado pero sin user namespaces: se ejecuta como sin bwrap (con los límites de
+        # recursos) en lugar de informar el error de bwrap como si fuera del programa, que salía
+        # con 1. `nostromo doctor` lo marca como ERROR.
+        bwrap_bin = None
     python_sandbox = _python_del_sistema() if bwrap_bin else None
     medicion: Optional[Path] = None
     directorio_medicion: Optional[str] = None

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import subprocess
 from pathlib import Path
 from typing import List, Optional
 
@@ -17,7 +16,7 @@ from rich.table import Table
 from nostromo import __version__
 from nostromo.core.runner import descubrir_casos_prueba, evaluar_binario
 from nostromo.core.models import SCHEMA_VERSION
-from nostromo.core.sandbox import _binds_del_sistema, _python_del_sistema, ejecutar_aislado
+from nostromo.core.sandbox import _python_del_sistema, bwrap_funciona, ejecutar_aislado
 
 console = Console()
 err_console = Console(stderr=True)
@@ -306,16 +305,8 @@ def stress_cmd(
     raise typer.Exit(code=0 if fallos == 0 else 1)
 
 
-def _bwrap_funciona(bwrap: str) -> bool:
-    """Que el binario exista no basta: sin user namespaces `bwrap` aborta al arrancar."""
-    try:
-        proc = subprocess.run(
-            [bwrap, *_binds_del_sistema(), "--unshare-all", "--die-with-parent", "/bin/true"],
-            capture_output=True, timeout=10,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return proc.returncode == 0
+# La misma comprobación que usa ejecutar_aislado para decidir si aísla con bwrap.
+_bwrap_funciona = bwrap_funciona
 
 
 @app.command("doctor")
