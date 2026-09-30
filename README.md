@@ -59,3 +59,33 @@ nostromo doctor
 ```
 
 `nostromo check` es un alias de `nostromo test`. Los comandos `run`, `test`/`check`, `stress`, `report` y `doctor` son todos los que existen; `nostromo --help` los lista.
+
+<!-- p1:referencia:inicio — generado por p1-tools/scripts/readme_generado.py: no editar a mano -->
+
+## Referencia rápida
+
+### Requisitos
+
+- Python ≥ 3.11 y [uv](https://docs.astral.sh/uv/getting-started/installation/).
+- Programas del sistema: `bwrap`.
+
+| Sistema | `bwrap` |
+|:--|:--|
+| Debian / Ubuntu | `sudo apt install bubblewrap` |
+| Fedora | `sudo dnf install bubblewrap` |
+| Windows | no existe (solo Linux): usar WSL |
+| macOS | no existe (solo Linux) |
+
+### Comandos
+
+| Comando | Descripción |
+|:--|:--|
+| `nostromo run` | Ejecuta un binario dentro del sandbox con límites estrictos de CPU y memoria. |
+| `nostromo check`, `nostromo test` | Ejecuta una suite completa de casos de prueba .in/.out y genera el reporte de evaluación. |
+| `nostromo stress` | Ejecuta N repeticiones masivas para verificar estabilidad, memoria y evitar condiciones de carrera. |
+| `nostromo doctor` | Verifica el aislamiento del sandbox (Bubblewrap) y sale 1 si no está operativo. |
+| `nostromo report` | Genera directamente la sección de reporte Markdown de NOSTROMO para Dredd. |
+
+Ayuda de cada comando: `nostromo <comando> -h`.
+
+<!-- p1:referencia:fin -->
