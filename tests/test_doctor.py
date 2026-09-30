@@ -65,3 +65,14 @@ def test_con_un_bwrap_que_no_arranca_se_ejecuta_sin_el(tmp_path, monkeypatch):
     res = ejecutar_aislado(Path(shutil.which("true")))
     assert res.codigo_retorno == 0
     assert "bwrap" not in res.stderr
+
+
+def test_en_windows_bwrap_es_un_aviso_y_no_un_error(monkeypatch):
+    # bwrap no existe en Windows: instalarlo es imposible y nostromo igual corre (N-ECO-10).
+    monkeypatch.setattr(cli.shutil, "which", lambda _: None)
+    monkeypatch.setattr(cli, "_es_windows", lambda: True)
+    res = runner.invoke(cli.app, ["doctor", "--json"])
+    datos = json.loads(res.output)
+    assert res.exit_code == 0 and datos["ok"] is True
+    bwrap = datos["componentes"][0]
+    assert bwrap["estado"] == "ADVERTENCIA" and bwrap["requerido"] is False and "WSL" in bwrap["detalle"]

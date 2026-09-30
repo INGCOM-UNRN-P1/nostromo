@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import math
 import os
-import resource
 import shutil
 import subprocess
 import tempfile
 import time
 from pathlib import Path
 from typing import List, Optional, Tuple
+
+try:
+    import resource  # solo POSIX
+except ImportError:  # pragma: no cover - Windows (Python nativo o el de MSYS2 UCRT64)
+    resource = None  # type: ignore[assignment]
 
 
 class ResultadoEjecucion(tuple):
@@ -71,7 +75,13 @@ def _configurar_limites(memoria_mb: int, cpu_segundos: int, archivo_mb: int, lim
       varios hilos que gasta N segundos de CPU por segundo de reloj;
     - tamaño de cada archivo escrito (incluida la salida estándar): un bucle
       que imprime sin parar llenaba el disco hasta el timeout.
+
+    En Windows no hay límites por proceso (ni `preexec_fn`): devuelve None y la
+    ejecución queda acotada por el timeout.
     """
+    if resource is None or os.name == "nt":
+        return None
+
     def preexec_fn():
         bytes_max = memoria_mb * 1024 * 1024
         limites = [
@@ -195,6 +205,15 @@ def _leer_medicion(archivo: Path) -> Optional[Tuple[int, int]]:
 # Nombres de las señales que interesan pedagógicamente; el resto se reporta
 # como SIGNAL_<n>.
 _SENALES = {11: "SEGFAULT", 6: "ABORT", 8: "FPE", 24: "CPU_LIMIT", 25: "FILE_SIZE_LIMIT"}
+# En Windows un crash no llega como señal sino como código NTSTATUS (nunca aparece en POSIX).
+_NTSTATUS = {
+    0xC0000005: "SEGFAULT",  # STATUS_ACCESS_VIOLATION
+    0xC00000FD: "SEGFAULT",  # STATUS_STACK_OVERFLOW
+    0xC0000374: "ABORT",     # STATUS_HEAP_CORRUPTION (p. ej. double free)
+    0xC0000409: "ABORT",     # STATUS_STACK_BUFFER_OVERRUN / __fastfail (abort del UCRT)
+    0xC0000094: "FPE",       # STATUS_INTEGER_DIVIDE_BY_ZERO
+    0xC000008E: "FPE",       # STATUS_FLOAT_DIVIDE_BY_ZERO
+}
 
 
 def clasificar_terminacion(codigo_retorno: int, bajo_bwrap: bool) -> Optional[str]:
@@ -211,6 +230,8 @@ def clasificar_terminacion(codigo_retorno: int, bajo_bwrap: bool) -> Optional[st
     """
     if codigo_retorno == 0:
         return None
+    if (codigo_retorno & 0xFFFFFFFF) in _NTSTATUS:
+        return _NTSTATUS[codigo_retorno & 0xFFFFFFFF]
     senal = None
     if codigo_retorno < 0:
         senal = -codigo_retorno
@@ -219,6 +240,18 @@ def clasificar_terminacion(codigo_retorno: int, bajo_bwrap: bool) -> Optional[st
     if senal is not None:
         return _SENALES.get(senal, f"SIGNAL_{senal}")
     return "NON_ZERO"
+
+
+def _ejecutar_sin_medir(cmd, stdin_texto, timeout_segundos):
+    """Windows: sin `os.wait4` no se mide el consumo (cpu y memoria quedan en None)."""
+    entrada = (stdin_texto or "").encode("utf-8", errors="replace")
+    try:
+        proc = subprocess.run(cmd, input=entrada, capture_output=True, timeout=timeout_segundos)
+    except subprocess.TimeoutExpired as e:
+        return (-9, (e.stdout or b"").decode("utf-8", errors="replace"),
+                (e.stderr or b"").decode("utf-8", errors="replace"), None, None, True)
+    return (proc.returncode, proc.stdout.decode("utf-8", errors="replace"),
+            proc.stderr.decode("utf-8", errors="replace"), None, None, False)
 
 
 def _ejecutar_midiendo(cmd, stdin_texto, timeout_segundos, preexec):
@@ -232,8 +265,10 @@ def _ejecutar_midiendo(cmd, stdin_texto, timeout_segundos, preexec):
 
     Para poder llamar a `wait4` sin que `communicate()` compita por el mismo
     `waitpid`, la entrada y las salidas viajan por archivos temporales en lugar
-    de pipes.
+    de pipes. Donde no hay `wait4` (Windows) se ejecuta sin medir.
     """
+    if not hasattr(os, "wait4"):
+        return _ejecutar_sin_medir(cmd, stdin_texto, timeout_segundos)
     with tempfile.TemporaryFile() as fin, tempfile.TemporaryFile() as fout, tempfile.TemporaryFile() as ferr:
         fin.write((stdin_texto or "").encode("utf-8", errors="replace"))
         fin.seek(0)
@@ -341,7 +376,8 @@ def ejecutar_aislado(
         # Bajo bwrap el `rusage` que devuelve wait4 es el del lanzador, no el del
         # programa. Si hay lanzador de medición se usa su registro; si no, el
         # consumo queda como no medido en vez de mostrar el del sandbox.
-        uso_medido = True
+        uso_medido = cpu_us is not None  # None: plataforma sin wait4 (Windows)
+        cpu_us, max_rss = cpu_us or 0, max_rss or 0
         if bwrap_bin:
             leido = _leer_medicion(medicion) if medicion else None
             if leido is not None:

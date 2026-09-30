@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import List, Optional
@@ -309,6 +310,10 @@ def stress_cmd(
 _bwrap_funciona = bwrap_funciona
 
 
+def _es_windows() -> bool:
+    return os.name == "nt"
+
+
 @app.command("doctor")
 def doctor_cmd(
     json_output: bool = typer.Option(False, "--json", help="Diagnóstico en JSON."),
@@ -317,13 +322,18 @@ def doctor_cmd(
     bwrap = shutil.which("bwrap")
     bwrap_ok = bool(bwrap) and _bwrap_funciona(bwrap)
     python_ok = _python_del_sistema() is not None
+    # bwrap es solo Linux: en Windows no se puede instalar y nostromo igual corre los programas,
+    # sin aislamiento y acotados por el timeout. Se informa como aviso, no como error (N-ECO-10).
+    windows = _es_windows()
     componentes = [
         {
             "componente": "Bubblewrap (bwrap)",
-            "estado": "OK" if bwrap_ok else "ERROR",
-            "requerido": True,
+            "estado": "OK" if bwrap_ok else ("ADVERTENCIA" if windows else "ERROR"),
+            "requerido": not windows,
             "detalle": bwrap if bwrap_ok else (
-                f"{bwrap} no arranca (¿user namespaces deshabilitados?)" if bwrap
+                "No existe en Windows: los programas corren sin aislamiento, acotados por el timeout "
+                "(para el sandbox, usar WSL)" if windows
+                else f"{bwrap} no arranca (¿user namespaces deshabilitados?)" if bwrap
                 else "Ausente: sin aislamiento fuerte (solo setrlimit). Instalar bubblewrap"
             ),
         },
@@ -331,10 +341,13 @@ def doctor_cmd(
             "componente": "python3 del sistema (medición de consumo)",
             "estado": "OK" if python_ok else "ADVERTENCIA",
             "requerido": False,
-            "detalle": "disponible" if python_ok else "Ausente: el consumo bajo bwrap se informa como N/D",
+            "detalle": "disponible" if python_ok else (
+                "En Windows no se mide el consumo de CPU y memoria" if windows
+                else "Ausente: el consumo bajo bwrap se informa como N/D"
+            ),
         },
     ]
-    ok = bwrap_ok
+    ok = bwrap_ok or windows
 
     if json_output:
         print(json.dumps({"schema_version": SCHEMA_VERSION, "herramienta": "nostromo", "ok": ok, "componentes": componentes}, indent=2, ensure_ascii=False))
