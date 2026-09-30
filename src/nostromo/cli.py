@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import typer
+from yutani.cli import crear_app
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -21,33 +22,14 @@ from nostromo.core.sandbox import _binds_del_sistema, _python_del_sistema, ejecu
 console = Console()
 err_console = Console(stderr=True)
 
-app = typer.Typer(
-    context_settings={"help_option_names": ["-h", "--help"]},
-    name="nostromo",
-    help="📦 NOSTROMO — Sandbox de ejecución aislada con Bubblewrap y evaluador de casos de prueba .in/.out.",
+# Contrato de línea de comandos del ecosistema (-h/--help, --version/-v, errores de datos como
+# mensajes) y textos de Typer en español, desde yutani (N-ECO-14).
+app = crear_app(
+    "nostromo",
+    __version__,
+    "📦 NOSTROMO — Sandbox de ejecución aislada con Bubblewrap y evaluador de casos de prueba .in/.out.",
     add_completion=True,
-    no_args_is_help=True,
 )
-
-
-def _version_callback(value: bool) -> None:
-    if value:
-        console.print(f"[bold cyan]NOSTROMO[/bold cyan] versión [bold]{__version__}[/bold]")
-        raise typer.Exit(code=0)
-
-
-@app.callback()
-def main_callback(
-    version: Optional[bool] = typer.Option(
-        None,
-        "--version",
-        "-v",
-        help="Muestra la versión de NOSTROMO.",
-        callback=_version_callback,
-        is_eager=True,
-    ),
-) -> None:
-    pass
 
 
 def _codigo_de_salida(ret: int, err_tipo: Optional[str], propagar: bool) -> int:
