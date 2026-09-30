@@ -19,14 +19,11 @@ import sys
 def _es_binario_asan(programa: str) -> bool:
     try:
         with open(programa, "rb") as f:
-            bloque = f.read(512 * 1024)
-            if b"libasan" in bloque or b"__asan" in bloque:
-                return True
-            f.seek(0, os.SEEK_END)
-            tamano = f.tell()
-            if tamano > 512 * 1024:
-                f.seek(max(0, tamano - 64 * 1024))
-                if b"libasan" in f.read() or b"__asan" in f.read():
+            while True:
+                bloque = f.read(512 * 1024)
+                if not bloque:
+                    break
+                if b"libasan" in bloque or b"__asan" in bloque or b"__ubsan" in bloque:
                     return True
     except Exception:
         pass
