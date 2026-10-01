@@ -11,6 +11,7 @@ runner = CliRunner()
 
 def test_sin_bwrap_el_doctor_sale_1(monkeypatch):
     monkeypatch.setattr(cli.shutil, "which", lambda _: None)
+    monkeypatch.setattr(cli, "_es_windows", lambda: False)  # en Windows, bwrap no se exige
     res = runner.invoke(cli.app, ["doctor", "--json"])
     assert res.exit_code == 1
     datos = json.loads(res.output)

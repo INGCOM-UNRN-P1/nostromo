@@ -16,6 +16,19 @@ try:
 except ImportError:  # pragma: no cover - Windows (Python nativo o el de MSYS2 UCRT64)
     resource = None  # type: ignore[assignment]
 
+ES_WINDOWS = os.name == "nt"
+
+
+def resolver_binario(binario: Path) -> Path:
+    """En Windows, `gcc -o prog` escribe `prog.exe` y la terminal acepta `./prog`: si `prog` no existe
+    y `prog.exe` sí, se usa ese (N-ECO-10)."""
+    binario = Path(binario)
+    if ES_WINDOWS and not binario.exists():
+        con_exe = binario.with_name(binario.name + ".exe")
+        if con_exe.is_file():
+            return con_exe
+    return binario
+
 
 class ResultadoEjecucion(tuple):
     """Tupla compatible hacia atrás con atributos extendidos de uso de CPU y memoria."""
@@ -319,7 +332,7 @@ def ejecutar_aislado(
     de CPU (el timeout redondeado hacia arriba más un segundo) y tamaño de cada
     archivo escrito (`archivo_mb`, incluida la salida estándar).
     """
-    binario = Path(binario).resolve()
+    binario = resolver_binario(Path(binario)).resolve()
     if not binario.is_file():
         return ResultadoEjecucion(1, "", f"El binario no existe: {binario}", 0.0, "FILE_NOT_FOUND", 0, 0)
 

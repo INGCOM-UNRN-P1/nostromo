@@ -7,8 +7,17 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from nostromo import __version__
+from nostromo.core import sandbox
 from nostromo.core.models import SCHEMA_VERSION
 from nostromo.core.runner import descubrir_casos_prueba, evaluar_binario
+
+
+def binarios_del_espacio(workspace: Path) -> List[Path]:
+    """Los ejecutables del espacio de trabajo: archivos sin extensión, y en Windows también los .exe
+    (ahí `gcc -o prog` escribe prog.exe y antes el plugin no encontraba ningún binario)."""
+    return [p for p in sorted(Path(workspace).glob("*"))
+            if p.is_file() and not p.name.startswith(".")
+            and (not p.suffix or (sandbox.ES_WINDOWS and p.suffix.lower() == ".exe"))]
 
 
 class NostromoPlugin:
@@ -32,7 +41,7 @@ class NostromoPlugin:
         if binario:
             binario = Path(binario)
         else:
-            binarios = [p for p in workspace.glob("*") if p.is_file() and not p.suffix and not p.name.startswith(".")]
+            binarios = binarios_del_espacio(workspace)
             if not binarios:
                 return {"ok": False, "observaciones": [{"codigo": "NO_BINARY", "mensaje": "No se encontró un ejecutable en el workspace."}]}
             binario = binarios[0]
