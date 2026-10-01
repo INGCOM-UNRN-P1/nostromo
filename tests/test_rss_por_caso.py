@@ -6,6 +6,7 @@ pico de uno anterior. Lo consumen la heurística `posible_leak` y las columnas d
 RAM del reporte.
 """
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -13,6 +14,10 @@ from pathlib import Path
 import pytest
 
 from nostromo.core.sandbox import ejecutar_aislado
+
+# Límites y mediciones POSIX (RLIMIT, ru_maxrss, bwrap): en Windows no existen (N-ECO-10; el manual
+# del estudiante lo dice) y nostromo corre sin ellos.
+SOLO_LINUX = pytest.mark.skipif(os.name == "nt", reason="límites y mediciones POSIX: no existen en Windows")
 
 necesita_gcc = pytest.mark.skipif(not shutil.which("gcc"), reason="requiere gcc")
 
@@ -31,6 +36,7 @@ def _compilar(tmp_path: Path, nombre: str, fuente: str) -> Path:
     return binario
 
 
+@SOLO_LINUX
 @necesita_gcc
 def test_un_caso_liviano_no_hereda_el_pico_de_uno_pesado(tmp_path):
     pesado = _compilar(tmp_path, "pesado", PESADO)
@@ -83,5 +89,7 @@ def test_stdout_y_stdin_siguen_viajando_bien(tmp_path):
         '#include <stdio.h>\nint main(void){ char b[64]; if (fgets(b, sizeof b, stdin)) fputs(b, stdout); return 0; }\n',
     )
     r = ejecutar_aislado(eco, stdin_texto="hola mundo\n", usar_bwrap=False)
-    assert r.stdout == "hola mundo\n"
+    # En Windows, el modo texto de la C runtime escribe «\r\n»; la comparación de los casos de prueba
+    # ya lo normaliza (runner.normalizar_salida).
+    assert r.stdout.replace("\r\n", "\n") == "hola mundo\n"
     assert r.codigo_retorno == 0

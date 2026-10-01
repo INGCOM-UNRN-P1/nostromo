@@ -6,6 +6,7 @@ D0801: el README prometía límites de tiempo de CPU y de tamaño de archivos qu
        no existían.
 """
 
+import os
 import shutil
 import subprocess
 
@@ -13,6 +14,10 @@ import pytest
 
 import nostromo.core.sandbox as sandbox
 from nostromo.core.sandbox import ejecutar_aislado
+
+# Límites y mediciones POSIX (RLIMIT, ru_maxrss, bwrap): en Windows no existen (N-ECO-10; el manual
+# del estudiante lo dice) y nostromo corre sin ellos.
+SOLO_LINUX = pytest.mark.skipif(os.name == "nt", reason="límites y mediciones POSIX: no existen en Windows")
 
 necesita_bwrap = pytest.mark.skipif(
     not (shutil.which("bwrap") and sandbox._python_del_sistema()),
@@ -80,6 +85,7 @@ def test_sin_lanzador_el_consumo_bajo_bwrap_queda_como_no_medido(tmp_path, monke
     assert (r.cpu_tiempo_us, r.max_rss_kb) == (0, 0)
 
 
+@SOLO_LINUX
 @necesita_gcc
 def test_en_ejecucion_directa_el_consumo_siempre_esta_medido(tmp_path):
     binario = _compilar(tmp_path, "liv", "int main(void) { return 0; }\n")
@@ -116,6 +122,7 @@ def test_un_limite_de_memoria_chico_no_impide_arrancar_el_lanzador(tmp_path):
     assert ejecutar_aislado(binario, timeout_segundos=5, memoria_mb=16).codigo_retorno == 0
 
 
+@SOLO_LINUX
 @necesita_gcc
 @pytest.mark.parametrize("usar_bwrap", [False, True])
 def test_el_tamanio_de_archivo_esta_limitado(tmp_path, usar_bwrap):

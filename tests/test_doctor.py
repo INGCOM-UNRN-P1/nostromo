@@ -1,10 +1,17 @@
 """Regresión de NOSTROMO-D0402: `doctor` debe fallar (exit 1) si el aislamiento no está operativo."""
 
+import os
 import json
+
+import pytest
 
 from typer.testing import CliRunner
 
 from nostromo import cli
+
+# Límites y mediciones POSIX (RLIMIT, ru_maxrss, bwrap): en Windows no existen (N-ECO-10; el manual
+# del estudiante lo dice) y nostromo corre sin ellos.
+SOLO_LINUX = pytest.mark.skipif(os.name == "nt", reason="límites y mediciones POSIX: no existen en Windows")
 
 runner = CliRunner()
 
@@ -26,6 +33,7 @@ def test_con_bwrap_operativo_el_doctor_sale_0(monkeypatch):
     assert res.exit_code == 0
 
 
+@SOLO_LINUX
 def test_bwrap_presente_pero_que_no_arranca_es_error(monkeypatch):
     monkeypatch.setattr(cli.shutil, "which", lambda _: "/usr/bin/bwrap")
     monkeypatch.setattr(cli, "_bwrap_funciona", lambda _: False)

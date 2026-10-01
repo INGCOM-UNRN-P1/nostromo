@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import json
 import subprocess
 from pathlib import Path
+
+import pytest
 from typer.testing import CliRunner
 
 from nostromo.cli import app
@@ -17,6 +20,10 @@ from nostromo.core.runner import (
     normalizar_salida,
 )
 from nostromo.core.sandbox import ejecutar_aislado
+
+# Límites y mediciones POSIX (RLIMIT, ru_maxrss, bwrap): en Windows no existen (N-ECO-10; el manual
+# del estudiante lo dice) y nostromo corre sin ellos.
+SOLO_LINUX = pytest.mark.skipif(os.name == "nt", reason="límites y mediciones POSIX: no existen en Windows")
 
 runner = CliRunner()
 
@@ -71,6 +78,7 @@ def test_medicion_cpu_y_memoria(tmp_path: Path):
     assert res.max_rss_kb >= 0
 
 
+@SOLO_LINUX
 def test_limite_memoria_virtual_estricto(tmp_path: Path):
     # Intentar alocar 200 MB con límite de 32 MB
     binario = compilar_c(tmp_path, "oom", """
@@ -147,4 +155,5 @@ def test_cli_run_con_captura_separada(tmp_path: Path):
     data = json.loads(res.output)
     assert "stdout msg" in data["stdout"]
     assert "stderr msg" in data["stderr"]
-    assert data["cpu_tiempo_us"] >= 0
+    # Sin `resource` (Windows) el tiempo de CPU no se mide y queda en null.
+    assert data["cpu_tiempo_us"] is None if os.name == "nt" else data["cpu_tiempo_us"] >= 0
