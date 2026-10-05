@@ -11,10 +11,9 @@ import pytest
 from typer.testing import CliRunner
 
 from nostromo.cli import app
-from nostromo.core.models import CasoPrueba, ReporteEvaluacion, ResultadoCaso
+from nostromo.core.models import CasoPrueba
 from nostromo.core.runner import (
     calcular_timeout_adaptativo,
-    descubrir_casos_prueba,
     evaluar_binario,
     generar_diff_lado_a_lado,
     normalizar_salida,

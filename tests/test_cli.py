@@ -2,7 +2,6 @@
 
 import json
 import subprocess
-from pathlib import Path
 from typer.testing import CliRunner
 from nostromo.cli import app
 

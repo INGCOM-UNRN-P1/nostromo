@@ -6,7 +6,6 @@ from typer.testing import CliRunner
 import subprocess
 import nostromo.cli
 from nostromo.cli import app
-from nostromo.core.runner import CasoPrueba, evaluar_binario, descubrir_casos_prueba
 from nostromo.core.sandbox import ejecutar_aislado
 from nostromo.ripley_plugin import NostromoPlugin
 

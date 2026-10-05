@@ -1,9 +1,6 @@
 """Tests unitarios para el runner de nostromo."""
 
 import subprocess
-from pathlib import Path
-import pytest
-from nostromo.core.models import CasoPrueba
 from nostromo.core.runner import descubrir_casos_prueba, evaluar_binario, normalizar_salida
 
 
