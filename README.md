@@ -58,6 +58,16 @@ nostromo report ./programa ./testcases/ -o reporte_nostromo.md
 nostromo doctor
 ```
 
+Cuando un caso falla por la salida, el detalle dice dónde está la primera diferencia: la línea y
+la columna, si solo difieren los espacios (con `·` para el espacio y `→` para la tabulación), las
+mayúsculas o un número, o si faltan o sobran líneas al final. Para el ciclo corto de depuración:
+
+```bash
+nostromo test ./programa ./testcases/ --caso 'borde-*'      # solo algunos casos (admite comodines)
+nostromo test ./programa ./testcases/ --etiqueta borde      # los que tienen «borde» en <caso>.tags
+nostromo test ./programa ./testcases/ --float-epsilon 0.001 # 3.1416 y 3.1415 coinciden
+```
+
 `nostromo check` es un alias de `nostromo test`. Los comandos `run`, `test`/`check`, `stress`, `report` y `doctor` son todos los que existen; `nostromo --help` los lista.
 
 <!-- p1:referencia:inicio — generado por p1-tools/scripts/readme_generado.py: no editar a mano -->

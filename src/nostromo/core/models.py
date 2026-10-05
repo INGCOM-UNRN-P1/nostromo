@@ -20,6 +20,7 @@ class CasoPrueba:
     timeout_segundos: float = 2.0
     memoria_mb: int = 128
     timeout_adaptativo: bool = False
+    etiquetas: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -41,6 +42,8 @@ class ResultadoCaso:
     posible_leak: bool = False
     uso_medido: bool = True
     hal_diagnostico: Optional[str] = None
+    # La primera diferencia explicada (línea, columna, espacios visibles); ver core/diferencia.py.
+    explicacion_diferencia: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -59,6 +62,7 @@ class ResultadoCaso:
             "stderr_obtenido": self.stderr_obtenido[:500],
             "diff_lineas": self.diff_lineas[:20],
             "hal_diagnostico": self.hal_diagnostico,
+            "explicacion_diferencia": self.explicacion_diferencia,
         }
 
 

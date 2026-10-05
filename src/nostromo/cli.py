@@ -120,7 +120,7 @@ def generar_seccion_markdown(reporte) -> str:
         lines.append("| :--- | :---: | :---: | :---: | :---: | :---: | :--- |")
         for r in reporte.resultados:
             st = "✓ PASS" if r.paso else f"❌ FAIL ({r.error_tipo or 'Mismatch'})"
-            diag = "OK" if r.paso else (r.diff_lineas[0].strip() if r.diff_lineas else r.stderr_obtenido[:40] or "Salida distinta")
+            diag = "OK" if r.paso else (r.explicacion_diferencia or r.stderr_obtenido[:40] or "Salida distinta")
             if r.hal_diagnostico:
                 diag += f" | HAL: {r.hal_diagnostico}"
             nom_limpio = str(r.nombre).replace("|", "&#124;")
@@ -142,11 +142,15 @@ def test_cmd(
     side_by_side: bool = typer.Option(False, "--side-by-side", "-s", help="Mostrar diff lado a lado en fallos."),
     json_output: bool = typer.Option(False, "--json", help="Salida estructurada en JSON."),
     output_md: Optional[Path] = typer.Option(None, "--md", "--output-md", "-o", help="Generar sección de reporte en formato Markdown para fusión en Dredd."),
+    caso: Optional[List[str]] = typer.Option(None, "--caso", "-c", help="Correr solo los casos con este nombre (admite comodines: 'borde-*'). Repetible."),
+    etiqueta: Optional[List[str]] = typer.Option(None, "--etiqueta", help="Correr solo los casos con esta etiqueta (archivo <caso>.tags). Repetible."),
+    float_epsilon: Optional[float] = typer.Option(None, "--float-epsilon", help="Tolerancia al comparar números (por ejemplo 0.001): 3.1416 y 3.1415 coinciden."),
 ) -> None:
     """Ejecuta una suite completa de casos de prueba .in/.out y genera el reporte de evaluación."""
-    casos = descubrir_casos_prueba(test_dir)
+    casos = descubrir_casos_prueba(test_dir, nombres=caso, etiquetas=etiqueta)
     if not casos:
-        err_console.print(f"[red]Error:[/red] No se encontraron casos de prueba (.in/.out) en '{test_dir}'.")
+        filtro = " que coincidan con el filtro" if caso or etiqueta else ""
+        err_console.print(f"[red]Error:[/red] No se encontraron casos de prueba (.in/.out){filtro} en '{test_dir}'.")
         raise typer.Exit(code=2)
 
     reporte = evaluar_binario(
@@ -156,6 +160,7 @@ def test_cmd(
         memoria_mb=memory,
         timeout_adaptativo=adaptive_timeout,
         integrar_hal=not no_hal,
+        epsilon=float_epsilon,
     )
 
     if output_md:
@@ -181,7 +186,7 @@ def test_cmd(
 
     for r in reporte.resultados:
         res_str = "[bold green]PASS[/bold green]" if r.paso else f"[bold red]FAIL ({r.error_tipo})[/bold red]"
-        detalle = "Coincidencia exacta" if r.paso else (r.diff_lineas[0].strip() if r.diff_lineas else r.stderr_obtenido[:40])
+        detalle = "Coincidencia exacta" if r.paso else (r.explicacion_diferencia or r.stderr_obtenido[:40])
         tabla.add_row(r.nombre, res_str, str(r.codigo_retorno), f"{r.tiempo_ms:.1f} ms", str(r.cpu_tiempo_us) if r.uso_medido else "N/D", str(r.max_rss_kb) if r.uso_medido else "N/D", detalle)
 
     console.print(tabla)

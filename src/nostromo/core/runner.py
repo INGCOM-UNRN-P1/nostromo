@@ -3,18 +3,28 @@
 from __future__ import annotations
 
 import difflib
+import fnmatch
 import json
 import shutil
 import subprocess
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from nostromo.core.diferencia import explicar_diferencia, salidas_equivalentes
 from nostromo.core.models import CasoPrueba, ReporteEvaluacion, ResultadoCaso
 from nostromo.core.sandbox import ejecutar_aislado
 
 
-def descubrir_casos_prueba(directorio: Path) -> List[CasoPrueba]:
-    """Descubre parejas de archivos .in y .out en un directorio."""
+def descubrir_casos_prueba(
+    directorio: Path,
+    nombres: Optional[List[str]] = None,
+    etiquetas: Optional[List[str]] = None,
+) -> List[CasoPrueba]:
+    """Descubre parejas de archivos .in y .out en un directorio.
+
+    `nombres` (patrones como `borde-*`) y `etiquetas` (las de `<caso>.tags`, separadas por espacios
+    o comas) dejan solo algunos casos, para el ciclo corto de depuración (QoL #739, #740).
+    """
     directorio = Path(directorio)
     if not directorio.is_dir():
         return []
@@ -31,6 +41,13 @@ def descubrir_casos_prueba(directorio: Path) -> List[CasoPrueba]:
         f_in = files.get("in")
         f_out = files.get("out")
 
+        if nombres and not any(fnmatch.fnmatchcase(stem, patron) for patron in nombres):
+            continue
+        f_tags = directorio / f"{stem}.tags"
+        tags = f_tags.read_text(encoding="utf-8").replace(",", " ").split() if f_tags.is_file() else []
+        if etiquetas and not set(etiquetas) & set(tags):
+            continue
+
         stdin_txt = f_in.read_text(encoding="utf-8") if f_in else ""
         stdout_exp = f_out.read_text(encoding="utf-8") if f_out else ""
 
@@ -40,6 +57,7 @@ def descubrir_casos_prueba(directorio: Path) -> List[CasoPrueba]:
             archivo_out=f_out,
             stdin_texto=stdin_txt,
             stdout_esperado=stdout_exp,
+            etiquetas=tags,
         ))
 
     return casos
@@ -134,6 +152,7 @@ def evaluar_binario(
     memoria_mb: int = 128,
     timeout_adaptativo: bool = False,
     integrar_hal: bool = True,
+    epsilon: Optional[float] = None,
 ) -> ReporteEvaluacion:
     """Ejecuta una suite de casos de prueba contra el binario."""
     resultados: List[ResultadoCaso] = []
@@ -166,9 +185,12 @@ def evaluar_binario(
         exp_norm = normalizar_salida(c.stdout_esperado)
 
         # Chequear coincidencia
-        paso = (ret == 0) and (out_norm == exp_norm)
+        paso = (ret == 0) and salidas_equivalentes(exp_norm.splitlines(), out_norm.splitlines(), epsilon)
         diff_lines = []
         diff_side = []
+        explicacion = None
+        if not paso and not err_tipo and ret == 0:
+            explicacion = explicar_diferencia(exp_norm.splitlines(), out_norm.splitlines(), epsilon)
         if not paso and not err_tipo:
             err_tipo = "DIFF"
             diff_lines = list(difflib.unified_diff(
@@ -203,6 +225,7 @@ def evaluar_binario(
             posible_leak=posible_fuga,
             uso_medido=uso_medido,
             hal_diagnostico=hal_diag,
+            explicacion_diferencia=explicacion,
         ))
 
     aprobados = sum(1 for r in resultados if r.paso)
