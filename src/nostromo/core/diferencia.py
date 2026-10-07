@@ -26,7 +26,7 @@ def _iguales_con_tolerancia(esperada: str, obtenida: str, epsilon: float) -> boo
     a, b = esperada.split(), obtenida.split()
     if len(a) != len(b):
         return False
-    for x, y in zip(a, b):
+    for x, y in zip(a, b, strict=False):
         if x == y:
             continue
         if not (_NUMERO.match(x) and _NUMERO.match(y)):
@@ -46,11 +46,11 @@ def salidas_equivalentes(esperado: List[str], obtenido: List[str], epsilon: Opti
     """Igualdad línea a línea; con `epsilon`, los números que difieren a lo sumo en epsilon cuentan
     como iguales (y el resto de las palabras tiene que coincidir)."""
     return len(esperado) == len(obtenido) and all(
-        lineas_equivalentes(e, o, epsilon) for e, o in zip(esperado, obtenido))
+        lineas_equivalentes(e, o, epsilon) for e, o in zip(esperado, obtenido, strict=False))
 
 
 def _primera_columna_distinta(a: str, b: str) -> int:
-    for i, (x, y) in enumerate(zip(a, b)):
+    for i, (x, y) in enumerate(zip(a, b, strict=False)):
         if x != y:
             return i
     return min(len(a), len(b))
@@ -58,7 +58,7 @@ def _primera_columna_distinta(a: str, b: str) -> int:
 
 def explicar_diferencia(esperado: List[str], obtenido: List[str], epsilon: Optional[float] = None) -> str:
     """Una o dos oraciones sobre la primera diferencia, pensadas para el estudiante."""
-    for n, (e, o) in enumerate(zip(esperado, obtenido), 1):
+    for n, (e, o) in enumerate(zip(esperado, obtenido, strict=False), 1):
         if lineas_equivalentes(e, o, epsilon):
             continue
         if e.split() == o.split():
@@ -89,5 +89,5 @@ def _solo_numeros_distintos(e: str, o: str) -> bool:
     a, b = e.split(), o.split()
     if len(a) != len(b):
         return False
-    distintos = [(x, y) for x, y in zip(a, b) if x != y]
+    distintos = [(x, y) for x, y in zip(a, b, strict=False) if x != y]
     return bool(distintos) and all(_NUMERO.match(x) and _NUMERO.match(y) for x, y in distintos)

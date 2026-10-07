@@ -4,7 +4,7 @@ from nostromo.core.sandbox import _binds_del_sistema
 
 
 def _pares(args):
-    return list(zip(args[1::3], args[2::3]))
+    return list(zip(args[1::3], args[2::3], strict=False))
 
 
 def test_sin_lib64_no_se_monta_lib_sobre_lib64():
