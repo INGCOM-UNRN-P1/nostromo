@@ -8,7 +8,7 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from nostromo.core.diferencia import explicar_diferencia, salidas_equivalentes
 from nostromo.core.models import CasoPrueba, ReporteEvaluacion, ResultadoCaso
@@ -29,7 +29,7 @@ def descubrir_casos_prueba(
     if not directorio.is_dir():
         return []
 
-    casos_dict = {}
+    casos_dict: Dict[str, Dict[str, Path]] = {}
     for p in sorted(directorio.glob("*")):
         if p.suffix == ".in":
             casos_dict.setdefault(p.stem, {})["in"] = p

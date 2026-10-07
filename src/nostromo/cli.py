@@ -6,7 +6,7 @@ import json
 import os
 import shutil
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import typer
 from yutani.cli import crear_app
@@ -253,7 +253,7 @@ def stress_cmd(
     fallos = 0
     tiempos_ms = []
     rss_lista = []
-    codigos_retorno = {}
+    codigos_retorno: Dict[int, int] = {}
 
     for _ in range(iterations):
         res = ejecutar_aislado(binario=binario, stdin_texto=stdin_texto, timeout_segundos=timeout, memoria_mb=memory)
@@ -325,12 +325,12 @@ def doctor_cmd(
 ) -> None:
     """Verifica el aislamiento del sandbox (Bubblewrap) y sale 1 si no está operativo."""
     bwrap = shutil.which("bwrap")
-    bwrap_ok = bool(bwrap) and _bwrap_funciona(bwrap)
+    bwrap_ok = bwrap is not None and _bwrap_funciona(bwrap)
     python_ok = _python_del_sistema() is not None
     # bwrap es solo Linux: en Windows no se puede instalar y nostromo igual corre los programas,
     # sin aislamiento y acotados por el timeout. Se informa como aviso, no como error (N-ECO-10).
     windows = _es_windows()
-    componentes = [
+    componentes: List[Dict[str, Any]] = [
         {
             "componente": "Bubblewrap (bwrap)",
             "estado": "OK" if bwrap_ok else ("ADVERTENCIA" if windows else "ERROR"),
@@ -365,7 +365,7 @@ def doctor_cmd(
     colores = {"OK": "green", "ADVERTENCIA": "yellow", "ERROR": "red"}
     for c in componentes:
         color = colores[c["estado"]]
-        tabla.add_row(c["componente"], f"[{color}]{c['estado']}[/{color}]", c["detalle"])
+        tabla.add_row(str(c["componente"]), f"[{color}]{c['estado']}[/{color}]", str(c["detalle"]))
     console.print(tabla)
     raise typer.Exit(code=0 if ok else 1)
 
