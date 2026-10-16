@@ -32,7 +32,7 @@ NOSTROMO es un entorno aislado de ejecución (sandbox basado en `Bubblewrap` / `
 - `python3` del sistema en `/usr/bin` (o `/bin`, `/usr/local/bin`): bajo `bwrap` corre un pequeño lanzador que mide el consumo real del programa. Sin él la ejecución sigue funcionando, pero el consumo se informa como `N/D` en lugar de mostrar el del sandbox.
 
 ### Integración en el Ecosistema
-- CLI `nostromo`. Plugin registrado en `ripley.plugins` (`sandbox`). Consumido por `ripley` (invoca `nostromo check <binario> <tests> --json` desde su catálogo de satélites) y por `dredd`, que importa `nostromo.core.sandbox.ejecutar_aislado` como motor de aislamiento y cae a su propio sandbox si `nostromo` no está instalado. Subcomando `nostromo doctor`.
+- CLI `nostromo`. Plugin registrado en `ripley.plugins` (`sandbox`). Consumido por `ripley` (invoca `nostromo check <binario> <tests> --json` desde su catálogo de satélites) y por `dredd`, que importa `nostromo.core.sandbox.ejecutar_aislado` como motor de aislamiento y cae a su propio sandbox si `nostromo` no está instalado. Subcomando `nostromo doctor`. Para compilar aislado, `nostromo.core.sandbox.ejecutar_comando_aislado(cmd, escribibles, legibles, …)` corre un comando del sistema (gcc) dentro de bwrap con solo lectura salvo los directorios de salida, `/tmp` propio y sin red; el resultado dice si quedó `aislado` (lo usa `daedalus` con `aislar=True`).
 
 ---
 

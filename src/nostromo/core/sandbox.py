@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 try:
     import resource  # solo POSIX
@@ -40,6 +40,7 @@ class ResultadoEjecucion(tuple):
     cpu_tiempo_us: int
     max_rss_kb: int
     uso_medido: bool
+    aislado: bool
 
     def __new__(
         cls,
@@ -51,6 +52,7 @@ class ResultadoEjecucion(tuple):
         cpu_tiempo_us: int = 0,
         max_rss_kb: int = 0,
         uso_medido: bool = True,
+        aislado: bool = False,
     ):
         instance = super().__new__(cls, (codigo_retorno, stdout, stderr, tiempo_ms, error_tipo))
         instance.codigo_retorno = codigo_retorno
@@ -61,6 +63,8 @@ class ResultadoEjecucion(tuple):
         instance.cpu_tiempo_us = cpu_tiempo_us
         instance.max_rss_kb = max_rss_kb
         instance.uso_medido = uso_medido
+        # Si corrió dentro de bwrap: sin bwrap (o con bwrap roto) solo hay límites de recursos.
+        instance.aislado = aislado
         return instance
 
 
@@ -255,11 +259,11 @@ def clasificar_terminacion(codigo_retorno: int, bajo_bwrap: bool) -> Optional[st
     return "NON_ZERO"
 
 
-def _ejecutar_sin_medir(cmd, stdin_texto, timeout_segundos):
+def _ejecutar_sin_medir(cmd, stdin_texto, timeout_segundos, cwd=None):
     """Windows: sin `os.wait4` no se mide el consumo (cpu y memoria quedan en None)."""
     entrada = (stdin_texto or "").encode("utf-8", errors="replace")
     try:
-        proc = subprocess.run(cmd, input=entrada, capture_output=True, timeout=timeout_segundos)
+        proc = subprocess.run(cmd, input=entrada, capture_output=True, timeout=timeout_segundos, cwd=cwd)
     except subprocess.TimeoutExpired as e:
         return (-9, (e.stdout or b"").decode("utf-8", errors="replace"),
                 (e.stderr or b"").decode("utf-8", errors="replace"), None, None, True)
@@ -267,7 +271,7 @@ def _ejecutar_sin_medir(cmd, stdin_texto, timeout_segundos):
             proc.stderr.decode("utf-8", errors="replace"), None, None, False)
 
 
-def _ejecutar_midiendo(cmd, stdin_texto, timeout_segundos, preexec):
+def _ejecutar_midiendo(cmd, stdin_texto, timeout_segundos, preexec, cwd=None):
     """Ejecuta `cmd` y devuelve (retorno, stdout, stderr, cpu_us, max_rss_kb, timeout).
 
     El uso de recursos sale de `os.wait4` sobre ESE hijo. Antes se leía
@@ -281,12 +285,12 @@ def _ejecutar_midiendo(cmd, stdin_texto, timeout_segundos, preexec):
     de pipes. Donde no hay `wait4` (Windows) se ejecuta sin medir.
     """
     if not hasattr(os, "wait4"):
-        return _ejecutar_sin_medir(cmd, stdin_texto, timeout_segundos)
+        return _ejecutar_sin_medir(cmd, stdin_texto, timeout_segundos, cwd)
     with tempfile.TemporaryFile() as fin, tempfile.TemporaryFile() as fout, tempfile.TemporaryFile() as ferr:
         fin.write((stdin_texto or "").encode("utf-8", errors="replace"))
         fin.seek(0)
 
-        proc = subprocess.Popen(cmd, stdin=fin, stdout=fout, stderr=ferr, preexec_fn=preexec)
+        proc = subprocess.Popen(cmd, stdin=fin, stdout=fout, stderr=ferr, preexec_fn=preexec, cwd=cwd)
         limite = time.monotonic() + timeout_segundos
         expirado = False
         espera = 0.001
@@ -400,11 +404,13 @@ def ejecutar_aislado(
 
         if expirado:
             return ResultadoEjecucion(
-                124, "", "Tiempo límite de ejecución excedido (Timeout).", t_ms, "TIMEOUT", cpu_us, max_rss, uso_medido
+                124, "", "Tiempo límite de ejecución excedido (Timeout).", t_ms, "TIMEOUT", cpu_us, max_rss, uso_medido,
+                aislado=bool(bwrap_bin),
             )
 
         err_tipo = clasificar_terminacion(ret, bajo_bwrap=bool(bwrap_bin))
-        return ResultadoEjecucion(ret, stdout, stderr, t_ms, err_tipo, cpu_us, max_rss, uso_medido)
+        return ResultadoEjecucion(ret, stdout, stderr, t_ms, err_tipo, cpu_us, max_rss, uso_medido,
+                                  aislado=bool(bwrap_bin))
 
     except Exception as e:
         t_ms = (time.perf_counter() - t0) * 1000.0
@@ -412,3 +418,76 @@ def ejecutar_aislado(
     finally:
         if directorio_medicion:
             shutil.rmtree(directorio_medicion, ignore_errors=True)
+
+
+def ejecutar_comando_aislado(
+    cmd: List[str],
+    escribibles: Sequence[Path] = (),
+    legibles: Sequence[Path] = (),
+    directorio: Optional[Path] = None,
+    timeout_segundos: float = 20.0,
+    memoria_mb: int = 1024,
+    archivo_mb: int = 64,
+    usar_bwrap: bool = True,
+) -> ResultadoEjecucion:
+    """Ejecuta un comando del sistema (el compilador, por ejemplo) aislado con bwrap.
+
+    A diferencia de `ejecutar_aislado`, que corre un binario del alumno, acá el programa es una
+    herramienta del sistema que tiene que leer fuentes y escribir resultados: se montan de solo
+    lectura los directorios del sistema, `/etc`, los de `legibles` y el del ejecutable, y con
+    escritura solo los de `escribibles`; `/tmp` es un tmpfs propio (gcc deja ahí sus intermedios)
+    y no hay red. Así el código que se compila (`#include "/home/…/solucion.c"`, por ejemplo) no
+    ve nada fuera de lo que se le pasa.
+
+    Límites: tiempo de pared (`timeout_segundos`), CPU (el timeout más un segundo), memoria
+    virtual (`memoria_mb`) y tamaño de cada archivo escrito (`archivo_mb`). Sin bwrap (o si no
+    arranca por falta de user namespaces) se ejecuta solo con esos límites y el resultado
+    trae `aislado=False`: quien lo llama decide si eso le alcanza.
+    """
+    if not cmd:
+        return ResultadoEjecucion(1, "", "Comando vacío.", 0.0, "EXCEPTION")
+    bwrap_bin = shutil.which("bwrap") if usar_bwrap else None
+    if bwrap_bin and not bwrap_funciona(bwrap_bin):
+        bwrap_bin = None
+
+    ejecutable = shutil.which(cmd[0]) or cmd[0]
+    final = [ejecutable, *cmd[1:]]
+    if bwrap_bin:
+        montajes: List[str] = [*_binds_del_sistema()]
+        if os.path.isdir("/etc"):
+            montajes += ["--ro-bind", "/etc", "/etc"]
+        montajes += ["--tmpfs", "/tmp"]
+        solo_lectura = [Path(ejecutable).resolve().parent, *legibles]
+        for ruta in dict.fromkeys(str(Path(r).resolve()) for r in solo_lectura):
+            ya_montado = any(ruta == d or ruta.startswith(d + "/") for d in _DIRECTORIOS_DEL_SISTEMA)
+            if os.path.exists(ruta) and not ya_montado:
+                montajes += ["--ro-bind", ruta, ruta]
+        for ruta in dict.fromkeys(str(Path(r).resolve()) for r in escribibles):
+            montajes += ["--bind", ruta, ruta]
+        final = [bwrap_bin, *montajes, "--proc", "/proc", "--dev", "/dev",
+                 *_bwrap_flags_aislamiento(bwrap_bin), "--die-with-parent",
+                 *(["--chdir", str(Path(directorio).resolve())] if directorio else []), *final]
+
+    preexec = _configurar_limites(
+        memoria_mb,
+        cpu_segundos=max(1, math.ceil(timeout_segundos)) + 1,
+        archivo_mb=archivo_mb,
+        limitar_memoria=memoria_mb > 0,
+    )
+    t0 = time.perf_counter()
+    try:
+        ret, stdout, stderr, cpu_us, max_rss, expirado = _ejecutar_midiendo(
+            final, "", timeout_segundos, preexec, cwd=str(directorio) if directorio else None)
+    except Exception as e:
+        return ResultadoEjecucion(1, "", str(e), (time.perf_counter() - t0) * 1000.0, "EXCEPTION",
+                                  aislado=bool(bwrap_bin))
+    t_ms = (time.perf_counter() - t0) * 1000.0
+    if expirado:
+        return ResultadoEjecucion(124, stdout, "Tiempo límite excedido (Timeout).", t_ms, "TIMEOUT",
+                                  aislado=bool(bwrap_bin))
+    # Bajo bwrap el uso medido es el del lanzador: no se informa como si fuera del comando.
+    medido = cpu_us is not None and not bwrap_bin
+    return ResultadoEjecucion(ret, stdout, stderr, t_ms, clasificar_terminacion(ret, bajo_bwrap=bool(bwrap_bin)),
+                              (cpu_us or 0) if medido else 0, (max_rss or 0) if medido else 0, medido,
+                              aislado=bool(bwrap_bin))
+
