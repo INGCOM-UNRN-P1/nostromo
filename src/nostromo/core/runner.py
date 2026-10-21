@@ -153,8 +153,15 @@ def evaluar_binario(
     timeout_adaptativo: bool = False,
     integrar_hal: bool = True,
     epsilon: Optional[float] = None,
+    aislamiento: str = "estandar",
 ) -> ReporteEvaluacion:
-    """Ejecuta una suite de casos de prueba contra el binario."""
+    """Ejecuta una suite de casos de prueba contra el binario.
+
+    Con `aislamiento="examen"` cada caso corre con el perfil de examen del sandbox y no se llama
+    a HAL (que depura el programa con gdb fuera del sandbox).
+    """
+    if aislamiento == "examen":
+        integrar_hal = False
     resultados: List[ResultadoCaso] = []
     tiempo_total = 0.0
     cpu_tiempo_total = 0
@@ -170,6 +177,7 @@ def evaluar_binario(
             stdin_texto=c.stdin_texto,
             timeout_segundos=t_limit,
             memoria_mb=c.memoria_mb or memoria_mb,
+            aislamiento=aislamiento,
         )
         ret, stdout, stderr, t_ms, err_tipo = res_ejec
         cpu_us = getattr(res_ejec, "cpu_tiempo_us", 0)

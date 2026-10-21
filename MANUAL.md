@@ -83,11 +83,30 @@ JSON (`codigo_retorno`) o se obtiene con --exit-code.
 | `--memory`, `-m` | `int` | `128` | Límite de memoria en Megabytes. |
 | `--json` | `bool` | `False` | Salida en JSON. |
 | `--exit-code` | `bool` | `False` | Salir con el código del programa (señal = 128+n) en vez de 0/1/2. |
+| `--aislamiento` | `str` | `estandar` | Perfil del sandbox: `estandar` o `examen` (también en `nostromo test`). |
 
 #### Ejemplo de Invocación
 ```bash
 nostromo run <binario>
 ```
+
+#### Perfil de examen (`--aislamiento examen`)
+Para ejecutar pruebas en un examen. Además de los límites de siempre:
+
+- **Sin red:** un filtro seccomp hace fallar `socket()` para toda familia salvo `AF_UNIX` (y
+  `io_uring_setup`), aunque la máquina no permita separar la red con `--unshare-net` (los
+  runners de CI); las syscalls de otra arquitectura (32 bits, x32) se rechazan.
+- **Procesos:** namespace de PIDs propio (`/proc` muestra sólo los del sandbox) y a lo sumo 16
+  procesos (`RLIMIT_NPROC` aplicado dentro del user namespace: una fork bomb no pasa de ahí).
+- **Archivos:** la raíz es de solo lectura; sólo se escribe en el directorio de trabajo (uno
+  temporal que se borra al terminar) y en un `/tmp` efímero. El binario se monta de solo lectura.
+- **Entorno:** no hereda variables (`--clearenv`: ni tokens ni rutas del docente) y corre en una
+  sesión propia. HAL no se usa (depuraría el programa fuera del sandbox).
+
+No se degrada: si falta `bwrap` operativo, el `python3` del sistema o seccomp para la
+arquitectura (x86_64 y aarch64), no ejecuta nada y sale con 2. `nostromo doctor` informa si
+el perfil está disponible. Desde Python: `ejecutar_aislado(..., aislamiento="examen",
+directorio_trabajo=..., max_procesos=16)`.
 
 ### `nostromo check`
 

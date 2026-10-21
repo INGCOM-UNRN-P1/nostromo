@@ -5,7 +5,11 @@ Bajo bwrap el programa evaluado vive en un namespace de PIDs propio y su
 para un programa que reserva 80 MB). Acá el programa es hijo directo de este
 proceso, así que `wait4` sí informa SU consumo.
 
-Uso: python3 -S _medidor.py <archivo_de_medicion> <memoria_bytes> <programa> [args...]
+Uso: python3 -S _medidor.py [--procesos N] <archivo_de_medicion> <memoria_bytes> <programa> [args...]
+
+Con `--procesos N` (perfil de examen) el programa no puede tener más de N procesos: RLIMIT_NPROC
+se cuenta por user namespace, así que acá adentro limita sólo al programa evaluado (aplicado a
+bwrap desde afuera contaría todos los procesos del usuario y el sandbox ni arrancaría).
 Escribe "<utime> <stime> <maxrss_kb>" en el archivo y sale con el código del
 programa (128+n si murió por la señal n, igual que bwrap).
 """
@@ -31,7 +35,12 @@ def _es_binario_asan(programa: str) -> bool:
 
 
 def main() -> int:
-    destino, memoria, programa, *args = sys.argv[1:]
+    argumentos = sys.argv[1:]
+    procesos = None
+    if argumentos[:1] == ["--procesos"]:
+        procesos = int(argumentos[1])
+        argumentos = argumentos[2:]
+    destino, memoria, programa, *args = argumentos
     limite = int(memoria)
     pid = os.fork()
     if pid == 0:
@@ -51,6 +60,12 @@ def main() -> int:
                 resource.setrlimit(recurso, (limite, limite))
             except (ValueError, OSError):
                 pass
+        if procesos is not None:
+            # En el examen el límite es obligatorio: si no se puede aplicar, no se ejecuta.
+            try:
+                resource.setrlimit(resource.RLIMIT_NPROC, (procesos, procesos))
+            except (ValueError, OSError):
+                os._exit(126)
         try:
             os.execv(programa, [programa, *args])
         finally:

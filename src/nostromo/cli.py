@@ -32,6 +32,21 @@ app = crear_app(
 )
 
 
+def _exigir_aislamiento(aislamiento: str) -> None:
+    """Valida el perfil y, para el de examen, que la máquina lo soporte (si no, sale con 2)."""
+    from nostromo.core.sandbox import AISLAMIENTOS, requisitos_examen
+
+    if aislamiento not in AISLAMIENTOS:
+        err_console.print(f"[red]Error:[/red] --aislamiento tiene que ser {' o '.join(AISLAMIENTOS)}.")
+        raise typer.Exit(code=2)
+    if aislamiento == "examen":
+        faltan = requisitos_examen()
+        if faltan:
+            err_console.print("[red]Error:[/red] el perfil de examen no se puede aplicar: " + "; ".join(faltan)
+                              + ". Nada se ejecutó sin aislar.")
+            raise typer.Exit(code=2)
+
+
 def _codigo_de_salida(ret: int, err_tipo: Optional[str], propagar: bool) -> int:
     """Contrato 0/1/2 de la CLI: 0 el programa terminó bien, 1 falló, 2 no se pudo ejecutar.
 
@@ -40,7 +55,7 @@ def _codigo_de_salida(ret: int, err_tipo: Optional[str], propagar: bool) -> int:
     arbitrario del estudiante. Con `--exit-code` se conserva la transparencia de
     `env`/`timeout`: el código del programa, con la señal como 128+n.
     """
-    if err_tipo in ("FILE_NOT_FOUND", "EXCEPTION"):
+    if err_tipo in ("FILE_NOT_FOUND", "EXCEPTION", "SANDBOX_NO_DISPONIBLE"):
         return 2
     if propagar:
         return ret if 0 <= ret <= 255 else (128 + -ret if ret < 0 else ret & 0xFF)
@@ -56,6 +71,7 @@ def run_cmd(
     memory: int = typer.Option(128, "--memory", "-m", help="Límite de memoria en Megabytes."),
     json_output: bool = typer.Option(False, "--json", help="Salida en JSON."),
     propagar_codigo: bool = typer.Option(False, "--exit-code", help="Salir con el código del programa (señal = 128+n) en vez de 0/1/2."),
+    aislamiento: str = typer.Option("estandar", "--aislamiento", help="Perfil del sandbox: 'estandar' o 'examen' (sin sockets de red, /proc propio, procesos limitados y escritura sólo en un directorio temporal; no se degrada: sin bwrap/seccomp no ejecuta)."),
 ) -> None:
     """Ejecuta un binario dentro del sandbox con límites estrictos de CPU y memoria.
 
@@ -63,12 +79,14 @@ def run_cmd(
     señal o timeout) y 2 si no se pudo ejecutar; el código del programa está en el
     JSON (`codigo_retorno`) o se obtiene con --exit-code.
     """
+    _exigir_aislamiento(aislamiento)
     res = ejecutar_aislado(
         binario=binario,
         args=args or [],
         stdin_texto=stdin or "",
         timeout_segundos=timeout,
         memoria_mb=memory,
+        aislamiento=aislamiento,
     )
     ret, stdout, stderr, t_ms, err_tipo = res
     cpu_us = getattr(res, "cpu_tiempo_us", 0)
@@ -84,6 +102,7 @@ def run_cmd(
             "max_rss_kb": rss_kb if uso_medido else None,
             "uso_medido": uso_medido,
             "error_tipo": err_tipo,
+            "aislamiento": getattr(res, "aislamiento", "estandar"),
             "stdout": stdout,
             "stderr": stderr,
         }
@@ -145,8 +164,10 @@ def test_cmd(
     caso: Optional[List[str]] = typer.Option(None, "--caso", "-c", help="Correr solo los casos con este nombre (admite comodines: 'borde-*'). Repetible."),
     etiqueta: Optional[List[str]] = typer.Option(None, "--etiqueta", help="Correr solo los casos con esta etiqueta (archivo <caso>.tags). Repetible."),
     float_epsilon: Optional[float] = typer.Option(None, "--float-epsilon", help="Tolerancia al comparar números (por ejemplo 0.001): 3.1416 y 3.1415 coinciden."),
+    aislamiento: str = typer.Option("estandar", "--aislamiento", help="Perfil del sandbox: 'estandar' o 'examen' (sin sockets de red, /proc propio, procesos limitados y escritura sólo en un directorio temporal; no se degrada: sin bwrap/seccomp no ejecuta)."),
 ) -> None:
     """Ejecuta una suite completa de casos de prueba .in/.out y genera el reporte de evaluación."""
+    _exigir_aislamiento(aislamiento)
     casos = descubrir_casos_prueba(test_dir, nombres=caso, etiquetas=etiqueta)
     if not casos:
         filtro = " que coincidan con el filtro" if caso or etiqueta else ""
@@ -161,6 +182,7 @@ def test_cmd(
         timeout_adaptativo=adaptive_timeout,
         integrar_hal=not no_hal,
         epsilon=float_epsilon,
+        aislamiento=aislamiento,
     )
 
     if output_md:
@@ -351,6 +373,7 @@ def doctor_cmd(
                 else "Ausente: el consumo bajo bwrap se informa como N/D"
             ),
         },
+        _componente_examen(windows),
     ]
     ok = bwrap_ok or windows
 
@@ -368,6 +391,20 @@ def doctor_cmd(
         tabla.add_row(str(c["componente"]), f"[{color}]{c['estado']}[/{color}]", str(c["detalle"]))
     console.print(tabla)
     raise typer.Exit(code=0 if ok else 1)
+
+
+def _componente_examen(windows: bool) -> Dict[str, Any]:
+    """Si se puede usar `--aislamiento examen` (no es requerido: sólo lo usan los exámenes)."""
+    from nostromo.core.sandbox import requisitos_examen
+
+    faltan = requisitos_examen()
+    return {
+        "componente": "Perfil de examen (--aislamiento examen)",
+        "estado": "OK" if not faltan else "ADVERTENCIA",
+        "requerido": False,
+        "detalle": "seccomp sin red, /proc propio, procesos limitados" if not faltan else
+        "No disponible: " + "; ".join(faltan) + (" (en un examen, nostromo no ejecuta sin él)" if not windows else ""),
+    }
 
 
 @app.command("report")

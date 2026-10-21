@@ -13,6 +13,7 @@ NOSTROMO es un entorno aislado de ejecución (sandbox basado en `Bubblewrap` / `
 - Contención no privilegiada mediante Bubblewrap (`bwrap`) con aislamiento de sistema de archivos, red y procesos, y degradación controlada a POSIX `setrlimit`.
 - Imposición de límites de tiempo de pared (`--timeout`), tiempo de CPU (el timeout redondeado hacia arriba más un segundo, que corta también a los programas con varios hilos), memoria máxima (`--memory`) y tamaño de cada archivo escrito, salida estándar incluida (16 MB).
 - Evaluación desatendida y automática de suites de casos de prueba de entrada/salida (`.in / .out`).
+- Perfil de examen (`--aislamiento examen` en `run` y `test`): el programa no puede abrir sockets de red (filtro seccomp sobre `socket()`, salvo `AF_UNIX`, aunque el runner no permita separar la red), ve sólo sus procesos en `/proc`, tiene a lo sumo 16 procesos (sin fork bombs), no hereda variables de entorno y sólo escribe en un directorio temporal propio (la raíz es de solo lectura y `/tmp` es efímero). No se degrada: sin `bwrap`, el `python3` del sistema o seccomp para la arquitectura, no ejecuta y sale con 2.
 - Captura y reporte estructurado de estadísticas de consumo (`rusage`: tiempo de usuario y de sistema, memoria pico) **del programa evaluado**, también bajo `bwrap`.
 
 ### Qué no cubre (Límites y Delegación)
@@ -53,6 +54,9 @@ nostromo stress ./programa ./testcases/caso_1.in --out ./testcases/caso_1.out -n
 
 # 5. Sección de reporte Markdown lista para fusionar en Dredd
 nostromo report ./programa ./testcases/ -o reporte_nostromo.md
+
+# Examen: aislamiento estricto o nada (sale con 2 si la máquina no lo soporta)
+nostromo test ./solucion tests/ --aislamiento examen
 
 # 6. Comprobar el sandbox (bwrap operativo, python3 para medir consumo); sale 1 si falla
 nostromo doctor

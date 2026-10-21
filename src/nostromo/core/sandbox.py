@@ -41,6 +41,7 @@ class ResultadoEjecucion(tuple):
     max_rss_kb: int
     uso_medido: bool
     aislado: bool
+    aislamiento: str
 
     def __new__(
         cls,
@@ -65,6 +66,7 @@ class ResultadoEjecucion(tuple):
         instance.uso_medido = uso_medido
         # Si corrió dentro de bwrap: sin bwrap (o con bwrap roto) solo hay límites de recursos.
         instance.aislado = aislado
+        instance.aislamiento = "estandar"
         return instance
 
 
@@ -271,7 +273,7 @@ def _ejecutar_sin_medir(cmd, stdin_texto, timeout_segundos, cwd=None):
             proc.stderr.decode("utf-8", errors="replace"), None, None, False)
 
 
-def _ejecutar_midiendo(cmd, stdin_texto, timeout_segundos, preexec, cwd=None):
+def _ejecutar_midiendo(cmd, stdin_texto, timeout_segundos, preexec, cwd=None, pass_fds=()):
     """Ejecuta `cmd` y devuelve (retorno, stdout, stderr, cpu_us, max_rss_kb, timeout).
 
     El uso de recursos sale de `os.wait4` sobre ESE hijo. Antes se leía
@@ -290,7 +292,8 @@ def _ejecutar_midiendo(cmd, stdin_texto, timeout_segundos, preexec, cwd=None):
         fin.write((stdin_texto or "").encode("utf-8", errors="replace"))
         fin.seek(0)
 
-        proc = subprocess.Popen(cmd, stdin=fin, stdout=fout, stderr=ferr, preexec_fn=preexec, cwd=cwd)
+        proc = subprocess.Popen(cmd, stdin=fin, stdout=fout, stderr=ferr, preexec_fn=preexec, cwd=cwd,
+                                pass_fds=tuple(pass_fds))
         limite = time.monotonic() + timeout_segundos
         expirado = False
         espera = 0.001
@@ -321,6 +324,47 @@ def _ejecutar_midiendo(cmd, stdin_texto, timeout_segundos, preexec, cwd=None):
     return retorno, stdout, stderr, cpu_us, uso.ru_maxrss, expirado
 
 
+AISLAMIENTOS = ("estandar", "examen")
+MAX_PROCESOS_EXAMEN = 16
+
+
+def requisitos_examen(bwrap_bin: Optional[str] = None) -> List[str]:
+    """Lo que le falta a esta máquina para el perfil de examen (vacío si se puede usar)."""
+    from nostromo.core.seccomp import filtro_sin_red
+
+    faltan = []
+    if ES_WINDOWS:
+        return ["el perfil de examen sólo existe en Linux (bwrap y seccomp)"]
+    bwrap_bin = bwrap_bin or shutil.which("bwrap")
+    if not bwrap_bin:
+        faltan.append("bwrap (bubblewrap) no está instalado")
+    elif not bwrap_funciona(bwrap_bin):
+        faltan.append(f"{bwrap_bin} no arranca (¿user namespaces deshabilitados?)")
+    if _python_del_sistema() is None:
+        faltan.append("falta python3 del sistema para limitar los procesos dentro del sandbox")
+    if filtro_sin_red() is None:
+        faltan.append(f"seccomp sin soporte para la arquitectura {os.uname().machine}")
+    return faltan
+
+
+def _argumentos_examen(directorio_trabajo: Path, fd_seccomp: int) -> List[str]:
+    """Lo que el perfil de examen agrega a bwrap: sólo `directorio_trabajo` es escribible (y un
+    /tmp efímero), sin variables de entorno del docente, sin red (seccomp) y en una sesión propia
+    (sin TIOCSTI sobre la terminal). Va después del tmpfs de /tmp: bwrap monta en orden y un tmpfs
+    posterior taparía el binario o el directorio de trabajo si están bajo /tmp."""
+    trabajo = str(directorio_trabajo)
+    return [
+        "--bind", trabajo, trabajo,
+        "--chdir", trabajo,
+        "--clearenv",
+        "--setenv", "PATH", "/usr/bin:/bin",
+        "--setenv", "HOME", trabajo,
+        "--setenv", "LANG", "C.UTF-8",
+        "--new-session",
+        "--seccomp", str(fd_seccomp),
+    ]
+
+
 def ejecutar_aislado(
     binario: Path,
     args: Optional[List[str]] = None,
@@ -329,16 +373,30 @@ def ejecutar_aislado(
     memoria_mb: int = 128,
     usar_bwrap: bool = True,
     archivo_mb: int = 16,
+    aislamiento: str = "estandar",
+    directorio_trabajo: Optional[Path] = None,
+    max_procesos: int = MAX_PROCESOS_EXAMEN,
 ) -> ResultadoEjecucion:
     """Ejecuta un binario de forma aislada retornando ResultadoEjecucion.
 
     Límites: memoria (`memoria_mb`), tiempo de pared (`timeout_segundos`), tiempo
     de CPU (el timeout redondeado hacia arriba más un segundo) y tamaño de cada
     archivo escrito (`archivo_mb`, incluida la salida estándar).
+
+    `aislamiento="examen"` (QoL #747 y #764) no degrada: si falta bwrap, el python del sistema o
+    seccomp para la arquitectura, no ejecuta y devuelve `SANDBOX_NO_DISPONIBLE`. Además de lo
+    estándar, el programa no puede abrir sockets de red (seccomp, aunque no se pueda separar la
+    red), ve sólo sus procesos en /proc, tiene a lo sumo `max_procesos` procesos y sólo puede
+    escribir en `directorio_trabajo` (uno temporal que se borra al terminar, si no se indica).
     """
+    if aislamiento not in AISLAMIENTOS:
+        raise ValueError(f"aislamiento desconocido: {aislamiento} (usá {' o '.join(AISLAMIENTOS)})")
     binario = resolver_binario(Path(binario)).resolve()
     if not binario.is_file():
         return ResultadoEjecucion(1, "", f"El binario no existe: {binario}", 0.0, "FILE_NOT_FOUND", 0, 0)
+    if aislamiento == "examen":
+        return _ejecutar_examen(binario, args, stdin_texto, timeout_segundos, memoria_mb, archivo_mb,
+                                directorio_trabajo, max_procesos)
 
     bwrap_bin = shutil.which("bwrap") if usar_bwrap else None
     if bwrap_bin and not bwrap_funciona(bwrap_bin):
@@ -418,6 +476,76 @@ def ejecutar_aislado(
     finally:
         if directorio_medicion:
             shutil.rmtree(directorio_medicion, ignore_errors=True)
+
+
+def _ejecutar_examen(binario: Path, args: Optional[List[str]], stdin_texto: str, timeout_segundos: float,
+                     memoria_mb: int, archivo_mb: int, directorio_trabajo: Optional[Path],
+                     max_procesos: int) -> ResultadoEjecucion:
+    from nostromo.core.seccomp import filtro_sin_red
+
+    bwrap_bin = shutil.which("bwrap")
+    faltan = requisitos_examen(bwrap_bin)
+    python_sandbox = _python_del_sistema()
+    filtro = filtro_sin_red()
+    if faltan or not bwrap_bin or not python_sandbox or filtro is None:
+        resultado = ResultadoEjecucion(
+            2, "", "El perfil de examen no se puede aplicar en esta máquina: " + "; ".join(faltan)
+            + ". No se ejecutó el programa.", 0.0, "SANDBOX_NO_DISPONIBLE", 0, 0, False)
+        resultado.aislamiento = "examen"
+        return resultado
+
+    temporal = directorio_trabajo is None
+    trabajo = Path(directorio_trabajo).resolve() if directorio_trabajo is not None else Path(
+        tempfile.mkdtemp(prefix="nostromo-examen-"))
+    trabajo.mkdir(parents=True, exist_ok=True)
+    directorio_medicion = tempfile.mkdtemp(prefix="nostromo-uso-")
+    medicion = Path(directorio_medicion) / "uso"
+    t0 = time.perf_counter()
+    try:
+        with tempfile.TemporaryFile() as programa_bpf:
+            programa_bpf.write(filtro)
+            programa_bpf.flush()
+            programa_bpf.seek(0)
+            fd = programa_bpf.fileno()
+            cmd = [
+                bwrap_bin,
+                *_binds_del_sistema(),
+                "--tmpfs", "/tmp",
+                "--ro-bind", str(binario.parent), str(binario.parent),
+                "--proc", "/proc",
+                "--dev", "/dev",
+                *_bwrap_flags_aislamiento(bwrap_bin),
+                "--die-with-parent",
+                *_argumentos_examen(trabajo, fd),
+                "--bind", directorio_medicion, directorio_medicion,
+                "--ro-bind", str(_MEDIDOR), str(_MEDIDOR),
+                # La raíz del sandbox es un tmpfs: de solo lectura, sólo quedan escribibles /tmp
+                # (efímero) y el directorio de trabajo.
+                "--remount-ro", "/",
+                python_sandbox, "-S", "-E", str(_MEDIDOR), "--procesos", str(max_procesos),
+                str(medicion), str(memoria_mb * 1024 * 1024), str(binario), *(args or []),
+            ]
+            preexec = _configurar_limites(memoria_mb, cpu_segundos=max(1, math.ceil(timeout_segundos)) + 1,
+                                          archivo_mb=archivo_mb, limitar_memoria=False)
+            ret, stdout, stderr, _, _, expirado = _ejecutar_midiendo(
+                cmd, stdin_texto, timeout_segundos, preexec, pass_fds=(fd,))
+        t_ms = (time.perf_counter() - t0) * 1000.0
+        leido = _leer_medicion(medicion)
+        cpu_us, max_rss = leido if leido is not None else (0, 0)
+        if expirado:
+            resultado = ResultadoEjecucion(124, "", "Tiempo límite de ejecución excedido (Timeout).", t_ms, "TIMEOUT",
+                                           cpu_us, max_rss, leido is not None, aislado=True)
+        else:
+            resultado = ResultadoEjecucion(ret, stdout, stderr, t_ms, clasificar_terminacion(ret, bajo_bwrap=True),
+                                           cpu_us, max_rss, leido is not None, aislado=True)
+    except Exception as e:
+        resultado = ResultadoEjecucion(1, "", str(e), (time.perf_counter() - t0) * 1000.0, "EXCEPTION", 0, 0, False)
+    finally:
+        shutil.rmtree(directorio_medicion, ignore_errors=True)
+        if temporal:
+            shutil.rmtree(trabajo, ignore_errors=True)
+    resultado.aislamiento = "examen"
+    return resultado
 
 
 def ejecutar_comando_aislado(
