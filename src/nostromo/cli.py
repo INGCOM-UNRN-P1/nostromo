@@ -67,7 +67,7 @@ def run_cmd(
     binario: Path = typer.Argument(..., help="Binario ejecutable a correr."),
     args: Optional[List[str]] = typer.Argument(None, help="Argumentos a pasar al binario."),
     stdin: Optional[str] = typer.Option(None, "--stdin", "-i", help="Datos enviados por stdin."),
-    timeout: float = typer.Option(2.0, "--timeout", "-t", help="Timeout máximo en segundos."),
+    timeout: float = typer.Option(2.0, "--timeout", "-t", help="Tiempo límite en segundos."),
     memory: int = typer.Option(128, "--memory", "-m", help="Límite de memoria en Megabytes."),
     json_output: bool = typer.Option(False, "--json", help="Salida en JSON."),
     propagar_codigo: bool = typer.Option(False, "--exit-code", help="Salir con el código del programa (señal = 128+n) en vez de 0/1/2."),
@@ -134,7 +134,7 @@ def generar_seccion_markdown(reporte) -> str:
     if reporte.ok:
         lines.append("> [!TIP]\n> **Casos de Prueba Aprobados:** El binario superó el 100% de los casos de prueba dentro del sandbox.\n")
     else:
-        lines.append("> [!WARNING]\n> **Fallo en Casos de Prueba:** Se detectaron salidas incorrectas, errores de ejecución o timeouts.\n")
+        lines.append("> [!WARNING]\n> **Fallo en Casos de Prueba:** Se detectaron salidas incorrectas, errores de ejecución o tiempos límite superados.\n")
         lines.append("| Caso | Estado | Retorno | Tiempo | CPU (μs) | RAM (KB) | Diagnóstico |")
         lines.append("| :--- | :---: | :---: | :---: | :---: | :---: | :--- |")
         for r in reporte.resultados:
@@ -154,9 +154,9 @@ def generar_seccion_markdown(reporte) -> str:
 def test_cmd(
     binario: Path = typer.Argument(..., help="Binario ejecutable a evaluar."),
     test_dir: Path = typer.Argument(..., help="Directorio con archivos .in y .out."),
-    timeout: float = typer.Option(2.0, "--timeout", "-t", help="Timeout por caso en segundos."),
+    timeout: float = typer.Option(2.0, "--timeout", "-t", help="Tiempo límite por caso en segundos."),
     memory: int = typer.Option(128, "--memory", "-m", help="Límite de memoria en MB."),
-    adaptive_timeout: bool = typer.Option(False, "--adaptive-timeout", "-a", help="Ajustar timeout según tamaño de entrada."),
+    adaptive_timeout: bool = typer.Option(False, "--adaptive-timeout", "-a", help="Ajustar el tiempo límite según tamaño de entrada."),
     no_hal: bool = typer.Option(False, "--no-hal", help="Desactivar diagnóstico con HAL."),
     side_by_side: bool = typer.Option(False, "--side-by-side", "-s", help="Mostrar diff lado a lado en fallos."),
     json_output: bool = typer.Option(False, "--json", help="Salida estructurada en JSON."),
@@ -226,7 +226,7 @@ def test_cmd(
         if r.hal_diagnostico:
             console.print(Panel(
                 f"[bold red]Diagnóstico Forense de HAL:[/bold red]\n{r.hal_diagnostico}",
-                title=f"💥 Crash detectado en '{r.nombre}'",
+                title=f"💥 Falla detectada en '{r.nombre}'",
                 border_style="red",
             ))
 
@@ -250,7 +250,7 @@ def stress_cmd(
     test_in: Path = typer.Argument(..., help="Archivo .in con datos de entrada o directorio de pruebas."),
     test_out: Optional[Path] = typer.Option(None, "--out", "-o", help="Archivo .out con salida esperada."),
     iterations: int = typer.Option(100, "--iterations", "-n", help="Cantidad de iteraciones consecutivas."),
-    timeout: float = typer.Option(2.0, "--timeout", "-t", help="Timeout máximo por iteración en segundos."),
+    timeout: float = typer.Option(2.0, "--timeout", "-t", help="Tiempo límite por iteración en segundos."),
     memory: int = typer.Option(128, "--memory", "-m", help="Límite de memoria por iteración en MB."),
     json_output: bool = typer.Option(False, "--json", help="Emitir reporte en JSON."),
 ) -> None:
@@ -358,7 +358,7 @@ def doctor_cmd(
             "estado": "OK" if bwrap_ok else ("ADVERTENCIA" if windows else "ERROR"),
             "requerido": not windows,
             "detalle": bwrap if bwrap_ok else (
-                "No existe en Windows: los programas corren sin aislamiento, acotados por el timeout "
+                "No existe en Windows: los programas corren sin aislamiento, acotados por el tiempo límite "
                 "(para el sandbox, usar WSL)" if windows
                 else f"{bwrap} no arranca (¿user namespaces deshabilitados?)" if bwrap
                 else "Ausente: sin aislamiento fuerte (solo setrlimit). Instalar bubblewrap"
